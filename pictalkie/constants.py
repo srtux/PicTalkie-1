@@ -62,5 +62,32 @@ COLOR_BLACK = (0, 0, 0)
 
 # --- Window ---
 WINDOW_WIDTH = 900
-WINDOW_HEIGHT = 700
+WINDOW_HEIGHT = 850
 FPS = 60
+
+# --- UI Layout (shared) ---
+MARGIN = 50                              # Left/right margin for full-width elements
+CONTENT_INSET = 60                       # Inset for waveform/content areas
+BORDER_WIDTH = 3                         # Border around displayed images
+LAYOUT_GAP = 7                           # Vertical gap between layout sections
+BUTTON_GAP = 20                          # Horizontal gap between side-by-side buttons
+
+# Top bar
+BACK_BTN_X = 10
+TOP_Y = 8
+BACK_BTN_W = 50
+BACK_BTN_H = 40
+HEADING_X = 75
+HEADING_W = 300
+
+# Buttons & labels
+BUTTON_ROW_Y = 70
+BUTTON_H = 48
+BUTTON_H_SM = 44
+LABEL_H = 30
+
+# File dialog
+DIALOG_X = 100
+DIALOG_Y = 50
+DIALOG_W = 700
+DIALOG_H = 500

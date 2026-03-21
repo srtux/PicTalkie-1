@@ -10,8 +10,13 @@ from pygame_gui.windows import UIFileDialog
 from ..constants import (
     COLOR_BG, COLOR_BLACK, COLOR_ACCENT,
     IMAGE_SIZE, CHANNELS, SAMPLE_RATE, SAMPLES_PER_VALUE,
-    TOTAL_PIXELS, TOTAL_VALUES, TOTAL_SAMPLES, AUDIO_DURATION,
-    WINDOW_WIDTH, WINDOW_HEIGHT,
+    TOTAL_PIXELS, TOTAL_VALUES, AUDIO_DURATION,
+    WINDOW_WIDTH,
+    MARGIN, CONTENT_INSET, BORDER_WIDTH, LAYOUT_GAP, BUTTON_GAP,
+    BACK_BTN_X, TOP_Y, BACK_BTN_W, BACK_BTN_H,
+    HEADING_X, HEADING_W,
+    BUTTON_ROW_Y, BUTTON_H, BUTTON_H_SM, LABEL_H,
+    DIALOG_X, DIALOG_Y, DIALOG_W, DIALOG_H,
 )
 from ..audio import load_wav, decode_from_samples, parse_protocol
 from ..hilbert import get_hilbert_order
@@ -20,6 +25,18 @@ from .components import (
     render_waveform_surface, play_audio, stop_audio, is_audio_playing,
     MicRecorder,
 )
+
+# --- Decoder-specific layout ---
+STATUS_Y = 125
+WAVE_Y = 155
+WAVE_H = 80
+DECODE_BTN_Y = 250
+DISPLAY_SIZE = 450                       # Decoded image display size (upscaled from IMAGE_SIZE)
+IMAGE_Y = 305
+PROGRESS_Y = IMAGE_Y + DISPLAY_SIZE + LAYOUT_GAP
+SAVE_Y = PROGRESS_Y + LABEL_H + LAYOUT_GAP
+PLAYBACK_LINE_W = 2                      # Waveform playback position indicator width
+MIC_RECENT_CHUNKS = 50                   # Recent mic chunks shown in live waveform
 
 
 class DecoderScreen:
@@ -64,17 +81,26 @@ class DecoderScreen:
         self.mic_recording = False
 
         # UI
-        self.back_btn = self._btn(10, 8, 50, 40, "<")
-        self.heading = self._label(75, 8, 300, 40, "Decoder", "#heading_label")
+        self.back_btn = self._btn(BACK_BTN_X, TOP_Y, BACK_BTN_W, BACK_BTN_H, "<")
+        self.heading = self._label(HEADING_X, TOP_Y, HEADING_W, BACK_BTN_H, "Decoder", "#heading_label")
 
-        half_w = (self.w - 120) // 2
-        self.select_btn = self._btn(50, 70, half_w, 48, "Select WAV File")
-        self.record_btn = self._btn(70 + half_w, 70, half_w, 48, "Record from Mic", "#accent_button")
+        half_w = (self.w - 2 * CONTENT_INSET) // 2
+        self.select_btn = self._btn(MARGIN, BUTTON_ROW_Y, half_w, BUTTON_H, "Select WAV File")
+        self.record_btn = self._btn(
+            MARGIN + BUTTON_GAP + half_w, BUTTON_ROW_Y, half_w, BUTTON_H,
+            "Record from Mic", "#accent_button",
+        )
 
-        self.decode_btn = self._btn(50, 280, self.w - 100, 48, "DECODE TO IMAGE", "#accent_button")
-        self.save_btn = self._btn(50, 645, self.w - 100, 44, "Save Image as PNG", "#accent_button")
-        self.status_label = self._label(50, 125, self.w - 100, 30, "", "#info_label")
-        self.progress_label = self._label(50, 612, self.w - 100, 30, "", "#progress_label")
+        self.decode_btn = self._btn(
+            MARGIN, DECODE_BTN_Y, self.w - 2 * MARGIN, BUTTON_H,
+            "DECODE TO IMAGE", "#accent_button",
+        )
+        self.save_btn = self._btn(
+            MARGIN, SAVE_Y, self.w - 2 * MARGIN, BUTTON_H_SM,
+            "Save Image as PNG", "#accent_button",
+        )
+        self.status_label = self._label(MARGIN, STATUS_Y, self.w - 2 * MARGIN, LABEL_H, "", "#info_label")
+        self.progress_label = self._label(MARGIN, PROGRESS_Y, self.w - 2 * MARGIN, LABEL_H, "", "#progress_label")
 
         self.decode_btn.hide()
         self.save_btn.hide()
@@ -181,7 +207,7 @@ class DecoderScreen:
 
     def _open_select_dialog(self):
         self.file_dialog = UIFileDialog(
-            rect=pygame.Rect(100, 50, 700, 500),
+            rect=pygame.Rect(DIALOG_X, DIALOG_Y, DIALOG_W, DIALOG_H),
             manager=self.manager,
             window_title="Select a PicTalkie WAV file",
             allowed_suffixes={".wav"},
@@ -190,7 +216,7 @@ class DecoderScreen:
 
     def _open_save_dialog(self):
         self.save_dialog = UIFileDialog(
-            rect=pygame.Rect(100, 50, 700, 500),
+            rect=pygame.Rect(DIALOG_X, DIALOG_Y, DIALOG_W, DIALOG_H),
             manager=self.manager,
             window_title="Save decoded image",
             allowed_suffixes={".png"},
@@ -212,7 +238,9 @@ class DecoderScreen:
 
         duration = len(samples) / (sample_rate or SAMPLE_RATE)
         self.status_label.set_text(f"Loaded: {source}  |  {duration:.2f}s")
-        self.waveform_surface = render_waveform_surface(samples, self.w - 120, 80)
+        self.waveform_surface = render_waveform_surface(
+            samples, self.w - 2 * CONTENT_INSET, WAVE_H,
+        )
         self.decode_btn.show()
         self.save_btn.hide()
 
@@ -308,7 +336,9 @@ class DecoderScreen:
                             self.all_pixel_values[base + 2],
                         ))
             self.pixels_decoded = target_pixels
-            self.live_display = pygame.transform.scale(self.live_surface, (256, 256))
+            self.live_display = pygame.transform.scale(
+                self.live_surface, (DISPLAY_SIZE, DISPLAY_SIZE),
+            )
             pct = (self.pixels_decoded / self.total_pixels) * 100
             self.progress_label.set_text(f"{self.pixels_decoded:,} / {self.total_pixels:,} pixels  ({pct:.0f}%)")
 
@@ -330,36 +360,40 @@ class DecoderScreen:
     def draw_background(self, surface):
         surface.fill(COLOR_BG)
 
+        wave_w = self.w - 2 * CONTENT_INSET
+
         # Waveform
         if self.waveform_surface:
-            wave_x, wave_y = 60, 155
-            pygame.draw.rect(surface, COLOR_BLACK, (wave_x, wave_y, self.w - 120, 80))
-            surface.blit(self.waveform_surface, (wave_x, wave_y))
+            pygame.draw.rect(surface, COLOR_BLACK, (CONTENT_INSET, WAVE_Y, wave_w, WAVE_H))
+            surface.blit(self.waveform_surface, (CONTENT_INSET, WAVE_Y))
 
             # Playback position
             if self.decoding and self.decode_start_time is not None:
                 elapsed = time.time() - self.decode_start_time
                 total_dur = len(self.wav_samples) / (self.wav_sample_rate or SAMPLE_RATE)
                 prog = min(elapsed / total_dur, 1.0) if total_dur > 0 else 0
-                px = wave_x + int(prog * (self.w - 120))
-                pygame.draw.line(surface, COLOR_ACCENT, (px, wave_y), (px, wave_y + 80), 2)
+                px = CONTENT_INSET + int(prog * wave_w)
+                pygame.draw.line(
+                    surface, COLOR_ACCENT,
+                    (px, WAVE_Y), (px, WAVE_Y + WAVE_H), PLAYBACK_LINE_W,
+                )
 
         # Recording level indicator
         if self.mic_recording and self.mic._chunks:
-            wave_x, wave_y = 60, 155
-            wave_w, wave_h = self.w - 120, 80
-            pygame.draw.rect(surface, COLOR_BLACK, (wave_x, wave_y, wave_w, wave_h))
-            # Show last ~1 second of audio as a live waveform
-            recent = self.mic._chunks[-50:] if len(self.mic._chunks) > 50 else self.mic._chunks
+            pygame.draw.rect(surface, COLOR_BLACK, (CONTENT_INSET, WAVE_Y, wave_w, WAVE_H))
+            recent = self.mic._chunks[-MIC_RECENT_CHUNKS:]
             if recent:
                 recent_samples = np.concatenate(recent)
                 from .components import draw_waveform
-                draw_waveform(surface, recent_samples, wave_x, wave_y, wave_w, wave_h, color=COLOR_ACCENT)
+                draw_waveform(surface, recent_samples, CONTENT_INSET, WAVE_Y, wave_w, WAVE_H, color=COLOR_ACCENT)
 
         # Live image reconstruction
         display_surf = self.live_display if self.decoding else self.decoded_surface
         if display_surf:
-            img_x = self.w // 2 - 128
-            img_y = 340
-            pygame.draw.rect(surface, COLOR_BLACK, (img_x - 3, img_y - 3, 262, 262))
-            surface.blit(display_surf, (img_x, img_y))
+            img_x = self.w // 2 - DISPLAY_SIZE // 2
+            border_size = DISPLAY_SIZE + 2 * BORDER_WIDTH
+            pygame.draw.rect(
+                surface, COLOR_BLACK,
+                (img_x - BORDER_WIDTH, IMAGE_Y - BORDER_WIDTH, border_size, border_size),
+            )
+            surface.blit(display_surf, (img_x, IMAGE_Y))

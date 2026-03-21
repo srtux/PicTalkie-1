@@ -6,14 +6,33 @@ from pygame_gui.windows import UIFileDialog
 from PIL import Image
 
 from ..constants import (
-    COLOR_BG, COLOR_BLACK, COLOR_ACCENT,
+    COLOR_BG, COLOR_BLACK, COLOR_TEXT_DIM,
     IMAGE_SIZE, SAMPLE_RATE, SAMPLES_PER_VALUE,
     TOTAL_SAMPLES, TOTAL_VALUES, AUDIO_DURATION,
-    WINDOW_WIDTH, WINDOW_HEIGHT,
+    WINDOW_WIDTH,
+    MARGIN, CONTENT_INSET, BUTTON_GAP,
+    BACK_BTN_X, TOP_Y, BACK_BTN_W, BACK_BTN_H,
+    HEADING_X, HEADING_W,
+    BUTTON_ROW_Y, BUTTON_H, BUTTON_H_SM, LABEL_H,
+    DIALOG_X, DIALOG_Y, DIALOG_W, DIALOG_H,
 )
 from ..image import load_and_process_image, extract_pixels_hilbert
 from ..audio import encode_to_samples, save_wav
 from .components import pil_to_pygame, draw_waveform, play_audio, stop_audio, is_audio_playing
+
+# --- Encoder-specific layout ---
+PREVIEW_SIZE = 200                       # Thumbnail display size for image previews
+PREVIEW_OFFSET_X = 120                   # Horizontal offset from center for each preview
+PREVIEW_CENTER_Y = 220                   # Vertical center of preview images
+PREVIEW_BORDER = 4                       # Border padding around preview thumbnails
+ENCODE_BTN_Y = 450
+PLAYBACK_BTN_Y = 520
+STATUS_Y = 575
+SPECS_TEXT_Y = 340
+SPECS_LINE_H = 22
+SPECS_FONT_SIZE = 15
+WAVE_Y = 600
+WAVE_H = 70
 
 
 class EncoderScreen:
@@ -35,14 +54,21 @@ class EncoderScreen:
         self.save_dialog = None
 
         # UI elements
-        self.back_btn = self._btn(10, 8, 50, 40, "<")
-        self.heading = self._label(75, 8, 300, 40, "Encoder", "#heading_label")
-        self.select_btn = self._btn(50, 70, self.w - 100, 48, "Select Image")
-        self.encode_btn = self._btn(50, 450, self.w - 100, 48, "ENCODE TO AUDIO", "#accent_button")
-        self.play_btn = self._btn(50, 520, (self.w - 120) // 2, 44, "Play")
-        self.save_btn = self._btn(70 + (self.w - 120) // 2, 520, (self.w - 120) // 2, 44,
-                                  "Save WAV", "#accent_button")
-        self.status_label = self._label(50, 575, self.w - 100, 30, "", "#info_label")
+        self.back_btn = self._btn(BACK_BTN_X, TOP_Y, BACK_BTN_W, BACK_BTN_H, "<")
+        self.heading = self._label(HEADING_X, TOP_Y, HEADING_W, BACK_BTN_H, "Encoder", "#heading_label")
+        self.select_btn = self._btn(MARGIN, BUTTON_ROW_Y, self.w - 2 * MARGIN, BUTTON_H, "Select Image")
+        self.encode_btn = self._btn(
+            MARGIN, ENCODE_BTN_Y, self.w - 2 * MARGIN, BUTTON_H,
+            "ENCODE TO AUDIO", "#accent_button",
+        )
+
+        half_w = (self.w - 2 * CONTENT_INSET) // 2
+        self.play_btn = self._btn(MARGIN, PLAYBACK_BTN_Y, half_w, BUTTON_H_SM, "Play")
+        self.save_btn = self._btn(
+            MARGIN + BUTTON_GAP + half_w, PLAYBACK_BTN_Y, half_w, BUTTON_H_SM,
+            "Save WAV", "#accent_button",
+        )
+        self.status_label = self._label(MARGIN, STATUS_Y, self.w - 2 * MARGIN, LABEL_H, "", "#info_label")
 
         self.encode_btn.hide()
         self.play_btn.hide()
@@ -112,7 +138,7 @@ class EncoderScreen:
 
     def _open_select_dialog(self):
         self.file_dialog = UIFileDialog(
-            rect=pygame.Rect(100, 50, 700, 500),
+            rect=pygame.Rect(DIALOG_X, DIALOG_Y, DIALOG_W, DIALOG_H),
             manager=self.manager,
             window_title="Select an image",
             allowed_suffixes={".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".webp"},
@@ -121,7 +147,7 @@ class EncoderScreen:
 
     def _open_save_dialog(self):
         self.save_dialog = UIFileDialog(
-            rect=pygame.Rect(100, 50, 700, 500),
+            rect=pygame.Rect(DIALOG_X, DIALOG_Y, DIALOG_W, DIALOG_H),
             manager=self.manager,
             window_title="Save WAV file",
             allowed_suffixes={".wav"},
@@ -133,10 +159,10 @@ class EncoderScreen:
             self.processed_image = load_and_process_image(path)
 
             display_orig = source.copy()
-            display_orig.thumbnail((200, 200), Image.LANCZOS)
+            display_orig.thumbnail((PREVIEW_SIZE, PREVIEW_SIZE), Image.LANCZOS)
             self.source_surface = pil_to_pygame(display_orig)
             self.processed_surface = pil_to_pygame(
-                self.processed_image.resize((200, 200), Image.NEAREST)
+                self.processed_image.resize((PREVIEW_SIZE, PREVIEW_SIZE), Image.NEAREST)
             )
             self.encoded = False
             self.encoded_samples = None
@@ -183,30 +209,31 @@ class EncoderScreen:
 
         # Draw image previews
         if self.source_surface:
-            # Original
             cx = self.w // 2
-            orig_rect = self.source_surface.get_rect(centerx=cx - 120, centery=220)
-            pygame.draw.rect(surface, COLOR_BLACK, orig_rect.inflate(4, 4))
+            orig_rect = self.source_surface.get_rect(
+                centerx=cx - PREVIEW_OFFSET_X, centery=PREVIEW_CENTER_Y,
+            )
+            pygame.draw.rect(surface, COLOR_BLACK, orig_rect.inflate(PREVIEW_BORDER, PREVIEW_BORDER))
             surface.blit(self.source_surface, orig_rect)
 
-            # Processed
             if self.processed_surface:
-                proc_rect = self.processed_surface.get_rect(centerx=cx + 120, centery=220)
-                pygame.draw.rect(surface, COLOR_BLACK, proc_rect.inflate(4, 4))
+                proc_rect = self.processed_surface.get_rect(
+                    centerx=cx + PREVIEW_OFFSET_X, centery=PREVIEW_CENTER_Y,
+                )
+                pygame.draw.rect(surface, COLOR_BLACK, proc_rect.inflate(PREVIEW_BORDER, PREVIEW_BORDER))
                 surface.blit(self.processed_surface, proc_rect)
 
-            # Specs text
-            font = pygame.font.SysFont("Helvetica, Arial", 15)
+            font = pygame.font.SysFont("Helvetica, Arial", SPECS_FONT_SIZE)
             specs = [
                 f"Resolution: {IMAGE_SIZE}x{IMAGE_SIZE}  |  RGB  |  Baird Encoding",
                 f"Sample Rate: {SAMPLE_RATE:,} Hz  |  {SAMPLES_PER_VALUE} samples/value  |  Duration: {AUDIO_DURATION:.2f}s",
             ]
             for i, line in enumerate(specs):
-                surf = font.render(line, True, (139, 148, 158))
-                surface.blit(surf, surf.get_rect(centerx=cx, top=340 + i * 22))
+                surf = font.render(line, True, COLOR_TEXT_DIM)
+                surface.blit(surf, surf.get_rect(centerx=cx, top=SPECS_TEXT_Y + i * SPECS_LINE_H))
 
         # Draw waveform if encoded
         if self.encoded and self.encoded_samples is not None:
-            wave_y, wave_w, wave_h = 600, self.w - 120, 70
-            pygame.draw.rect(surface, COLOR_BLACK, (60, wave_y, wave_w, wave_h))
-            draw_waveform(surface, self.encoded_samples, 60, wave_y, wave_w, wave_h)
+            wave_w = self.w - 2 * CONTENT_INSET
+            pygame.draw.rect(surface, COLOR_BLACK, (CONTENT_INSET, WAVE_Y, wave_w, WAVE_H))
+            draw_waveform(surface, self.encoded_samples, CONTENT_INSET, WAVE_Y, wave_w, WAVE_H)
