@@ -1,0 +1,11 @@
+[project]
+name = "pictalkie"
+version = "2.0.0"
+description = "Off-Grid Image Transmission via Audio"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.4.3",
+    "pillow>=12.1.1",
+    "pygame-ce>=2.5.7",
+    "pygame-gui>=0.6.14",
+]
