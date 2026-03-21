@@ -92,6 +92,37 @@ graph TD
     style Decoder fill:#1a1a2e,stroke:#3fb950,color:#e6edf3
 ```
 
+## Audio Message Structure
+
+PicTalkie uses a headerless protocol -- the audio is a single continuous stream of pixel data with no framing, sync markers, or metadata. The entire WAV file is the message.
+
+```
+|<---------------------------- 2,555,904 samples (57.96 seconds) ---------------------------->|
+|                                                                                              |
+| Pixel 1 (R)  | Pixel 1 (G)  | Pixel 1 (B)  | Pixel 2 (R)  | ...  | Pixel 65536 (B)        |
+| 13 samples    | 13 samples    | 13 samples    | 13 samples    |      | 13 samples             |
+| (all same amp)| (all same amp)| (all same amp)| (all same amp)|      | (all same amp)         |
+```
+
+### What's in the stream
+
+| #  | Component | Samples | Description |
+|----|-----------|---------|-------------|
+| 1  | **Pixel 1, Red** | 13 | Baird amplitude for the red channel of the first pixel (in Hilbert curve order) repeated 13 times |
+| 2  | **Pixel 1, Green** | 13 | Same for green channel |
+| 3  | **Pixel 1, Blue** | 13 | Same for blue channel |
+| 4  | **Pixel 2, Red** | 13 | Next pixel along the Hilbert curve |
+| ... | ... | ... | Continues for all 65,536 pixels x 3 channels |
+| 196,608 | **Pixel 65536, Blue** | 13 | Final value in the stream |
+
+**Total:** 196,608 values x 13 samples each = 2,555,904 samples
+
+### Why no header or sync?
+
+- **Simplicity:** The message is designed for analog walkie-talkie transmission where protocol overhead could get corrupted. Fewer moving parts means fewer failure modes.
+- **Fixed format:** Both sender and receiver know the exact format (256x256, RGB, 13 samples/value) so no metadata negotiation is needed.
+- **The decoder just starts reading:** It takes the raw samples, chunks them into groups of 13, averages each group, and maps back to pixel values. If the audio starts cleanly, the image reconstructs correctly.
+
 ## Key Specs
 
 | Parameter        | Value                  |
