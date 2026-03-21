@@ -1,26 +1,29 @@
-"""Decoder screen: select WAV, decode with live animation, save image."""
+"""Decoder screen: select WAV or record from microphone, decode with live animation, save image."""
 
 import time
 
+import numpy as np
 import pygame
 import pygame_gui
 from pygame_gui.windows import UIFileDialog
 
 from ..constants import (
-    COLOR_BG, COLOR_BLACK, COLOR_ACCENT, COLOR_GREEN,
+    COLOR_BG, COLOR_BLACK, COLOR_ACCENT,
     IMAGE_SIZE, CHANNELS, SAMPLE_RATE, SAMPLES_PER_VALUE,
-    TOTAL_PIXELS, TOTAL_VALUES, WINDOW_WIDTH, WINDOW_HEIGHT,
+    TOTAL_PIXELS, TOTAL_VALUES, TOTAL_SAMPLES, AUDIO_DURATION,
+    WINDOW_WIDTH, WINDOW_HEIGHT,
 )
 from ..audio import load_wav, decode_from_samples, _detect_samples_per_value
 from ..hilbert import get_hilbert_order
 from ..image import reconstruct_image
 from .components import (
     render_waveform_surface, play_audio, stop_audio, is_audio_playing,
+    MicRecorder,
 )
 
 
 class DecoderScreen:
-    """Decode a Baird-encoded WAV back to an image with live animation."""
+    """Decode a Baird-encoded WAV or live microphone recording back to an image."""
 
     def __init__(self, manager):
         self.manager = manager
@@ -48,10 +51,18 @@ class DecoderScreen:
         self.playing_audio = False
         self.waveform_surface = None
 
+        # Microphone
+        self.mic = MicRecorder()
+        self.mic_recording = False
+
         # UI
         self.back_btn = self._btn(10, 8, 50, 40, "<")
         self.heading = self._label(75, 8, 300, 40, "Decoder", "#heading_label")
-        self.select_btn = self._btn(50, 70, self.w - 100, 48, "Select WAV File")
+
+        half_w = (self.w - 120) // 2
+        self.select_btn = self._btn(50, 70, half_w, 48, "Select WAV File")
+        self.record_btn = self._btn(70 + half_w, 70, half_w, 48, "Record from Mic", "#accent_button")
+
         self.decode_btn = self._btn(50, 280, self.w - 100, 48, "DECODE TO IMAGE", "#accent_button")
         self.save_btn = self._btn(50, 645, self.w - 100, 44, "Save Image as PNG", "#accent_button")
         self.status_label = self._label(50, 125, self.w - 100, 30, "", "#info_label")
@@ -92,6 +103,9 @@ class DecoderScreen:
     def hide(self):
         for el in self.elements:
             el.hide()
+        # Stop recording if we navigate away
+        if self.mic_recording:
+            self._stop_recording()
 
     def handle_event(self, event):
         """Returns 'back' or None."""
@@ -99,11 +113,18 @@ class DecoderScreen:
             if event.ui_element == self.back_btn:
                 stop_audio()
                 self.playing_audio = False
+                if self.mic_recording:
+                    self._stop_recording()
                 return 'back'
-            if event.ui_element == self.select_btn:
+            if event.ui_element == self.select_btn and not self.mic_recording:
                 stop_audio()
                 self.playing_audio = False
                 self._open_select_dialog()
+            if event.ui_element == self.record_btn:
+                if self.mic_recording:
+                    self._stop_recording()
+                else:
+                    self._start_recording()
             if event.ui_element == self.decode_btn:
                 self._start_decoding()
             if event.ui_element == self.save_btn:
@@ -121,6 +142,34 @@ class DecoderScreen:
                     self.status_label.set_text(f"Saved: {path}")
 
         return None
+
+    # --- Microphone recording ---
+
+    def _start_recording(self):
+        try:
+            self.mic.start()
+            self.mic_recording = True
+            self.record_btn.set_text("Stop Recording")
+            self.status_label.set_text("Recording... (click Stop when transmission ends)")
+            self._reset_decode_state()
+            self.decode_btn.hide()
+            self.save_btn.hide()
+            self.waveform_surface = None
+        except Exception as e:
+            self.status_label.set_text(f"Mic error: {e}")
+
+    def _stop_recording(self):
+        samples = self.mic.stop()
+        self.mic_recording = False
+        self.record_btn.set_text("Record from Mic")
+
+        if len(samples) < SAMPLES_PER_VALUE:
+            self.status_label.set_text("Recording too short -- no audio captured")
+            return
+
+        self._load_samples(samples, SAMPLE_RATE, source="Microphone")
+
+    # --- File loading ---
 
     def _open_select_dialog(self):
         self.file_dialog = UIFileDialog(
@@ -141,27 +190,38 @@ class DecoderScreen:
 
     def _load_wav(self, path):
         try:
-            self.wav_samples, self.wav_sample_rate = load_wav(path)
-            self.decoded = False
-            self.decoding = False
-            self.decoded_image = None
-            self.decoded_surface = None
-            self.all_pixel_values = None
-            self.live_surface = None
-            self.live_display = None
-            self.pixels_decoded = 0
-
-            duration = len(self.wav_samples) / (self.wav_sample_rate or SAMPLE_RATE)
-            n_values = len(self.wav_samples) // SAMPLES_PER_VALUE
-            self.status_label.set_text(
-                f"Loaded: {path.split('/')[-1]}  |  {duration:.2f}s  |  {n_values:,} values"
-            )
-            self.waveform_surface = render_waveform_surface(self.wav_samples, self.w - 120, 80)
-            self.decode_btn.show()
-            self.save_btn.hide()
+            samples, sample_rate = load_wav(path)
+            self._load_samples(samples, sample_rate, source=path.split('/')[-1])
         except Exception as e:
             self.status_label.set_text(f"Error: {e}")
             self.wav_samples = None
+
+    def _load_samples(self, samples, sample_rate, source=""):
+        """Common path for loading audio from WAV or microphone."""
+        self.wav_samples = samples
+        self.wav_sample_rate = sample_rate
+        self._reset_decode_state()
+
+        duration = len(samples) / (sample_rate or SAMPLE_RATE)
+        n_values = len(samples) // SAMPLES_PER_VALUE
+        self.status_label.set_text(
+            f"Loaded: {source}  |  {duration:.2f}s  |  {n_values:,} values"
+        )
+        self.waveform_surface = render_waveform_surface(samples, self.w - 120, 80)
+        self.decode_btn.show()
+        self.save_btn.hide()
+
+    def _reset_decode_state(self):
+        self.decoded = False
+        self.decoding = False
+        self.decoded_image = None
+        self.decoded_surface = None
+        self.all_pixel_values = None
+        self.live_surface = None
+        self.live_display = None
+        self.pixels_decoded = 0
+
+    # --- Decoding ---
 
     def _start_decoding(self):
         if self.wav_samples is None:
@@ -184,6 +244,13 @@ class DecoderScreen:
             self.status_label.set_text(f"Decode error: {e}")
 
     def update(self):
+        # Update recording timer
+        if self.mic_recording:
+            elapsed = self.mic.elapsed_seconds
+            expected = AUDIO_DURATION
+            self.progress_label.set_text(f"Recording: {elapsed:.1f}s  (expected: ~{expected:.0f}s)")
+            return
+
         if not (self.decoding and self.all_pixel_values is not None):
             return
 
@@ -237,6 +304,18 @@ class DecoderScreen:
                 prog = min(elapsed / total_dur, 1.0) if total_dur > 0 else 0
                 px = wave_x + int(prog * (self.w - 120))
                 pygame.draw.line(surface, COLOR_ACCENT, (px, wave_y), (px, wave_y + 80), 2)
+
+        # Recording level indicator
+        if self.mic_recording and self.mic._chunks:
+            wave_x, wave_y = 60, 155
+            wave_w, wave_h = self.w - 120, 80
+            pygame.draw.rect(surface, COLOR_BLACK, (wave_x, wave_y, wave_w, wave_h))
+            # Show last ~1 second of audio as a live waveform
+            recent = self.mic._chunks[-50:] if len(self.mic._chunks) > 50 else self.mic._chunks
+            if recent:
+                recent_samples = np.concatenate(recent)
+                from .components import draw_waveform
+                draw_waveform(surface, recent_samples, wave_x, wave_y, wave_w, wave_h, color=COLOR_ACCENT)
 
         # Live image reconstruction
         display_surf = self.live_display if self.decoding else self.decoded_surface

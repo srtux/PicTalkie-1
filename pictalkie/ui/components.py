@@ -63,3 +63,88 @@ def is_audio_playing():
         return pygame.mixer.get_init() and pygame.mixer.music.get_busy()
     except Exception:
         return False
+
+
+# --- Microphone recording ---
+
+class MicRecorder:
+    """Records audio from the system microphone in a background thread.
+
+    Usage:
+        recorder = MicRecorder()
+        recorder.start()
+        # ... wait ...
+        samples = recorder.stop()  # returns float32 numpy array at SAMPLE_RATE Hz
+    """
+
+    def __init__(self):
+        self.recording = False
+        self._chunks = []
+        self._stream = None
+        self._device_rate = None
+
+    def start(self):
+        """Start recording from the default microphone."""
+        import sounddevice as sd
+        self._chunks = []
+        self.recording = True
+
+        # Use the mic's native sample rate to avoid driver resampling issues
+        device_info = sd.query_devices(kind='input')
+        self._device_rate = int(device_info['default_samplerate'])
+
+        self._stream = sd.InputStream(
+            samplerate=self._device_rate,
+            channels=1,
+            dtype='float32',
+            callback=self._callback,
+            blocksize=2048,
+        )
+        self._stream.start()
+
+    def _callback(self, indata, frames, time_info, status):
+        """Called by sounddevice for each audio block."""
+        if self.recording:
+            self._chunks.append(indata[:, 0].copy())
+
+    def stop(self):
+        """Stop recording and return samples as float32 array at SAMPLE_RATE Hz."""
+        self.recording = False
+        if self._stream:
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
+
+        if not self._chunks:
+            return np.array([], dtype=np.float32)
+
+        raw = np.concatenate(self._chunks)
+        self._chunks = []
+
+        # Resample to SAMPLE_RATE if mic uses a different rate
+        if self._device_rate and self._device_rate != SAMPLE_RATE:
+            raw = _resample(raw, self._device_rate, SAMPLE_RATE)
+
+        # Normalize: scale peak amplitude to match encoder's range (~0.7 max)
+        peak = np.max(np.abs(raw))
+        if peak > 0.001:
+            raw = raw * (0.7 / peak)
+
+        return raw
+
+    @property
+    def elapsed_seconds(self):
+        """How many seconds of audio have been recorded so far."""
+        if not self._chunks:
+            return 0.0
+        total = sum(len(c) for c in self._chunks)
+        return total / (self._device_rate or SAMPLE_RATE)
+
+
+def _resample(samples, from_rate, to_rate):
+    """Resample audio using linear interpolation."""
+    duration = len(samples) / from_rate
+    n_out = int(duration * to_rate)
+    x_old = np.linspace(0, duration, len(samples), endpoint=False)
+    x_new = np.linspace(0, duration, n_out, endpoint=False)
+    return np.interp(x_new, x_old, samples).astype(np.float32)

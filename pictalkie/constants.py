@@ -2,18 +2,17 @@
 
 # --- Encoding format ---
 # Audio duration = (IMAGE_SIZE^2 * CHANNELS * SAMPLES_PER_VALUE) / SAMPLE_RATE
-# These are tuned so the audio fits in a 15-second walkie-talkie transmission.
 
 SAMPLE_RATE = 44100          # CD-quality, universally supported
-IMAGE_SIZE = 128             # Largest power-of-2 that fits in 15s (Hilbert curve requires power of 2)
+IMAGE_SIZE = 256             # Power-of-2 required by Hilbert curve (256x256 = 65,536 pixels)
 CHANNELS = 3                 # RGB color
 SAMPLES_PER_VALUE = 13       # Repetitions per value for noise resilience (SNR ~3.6x via averaging)
 
 # Derived
-TOTAL_PIXELS = IMAGE_SIZE * IMAGE_SIZE                     # 16,384
-TOTAL_VALUES = TOTAL_PIXELS * CHANNELS                     # 49,152
-TOTAL_SAMPLES = TOTAL_VALUES * SAMPLES_PER_VALUE           # 638,976
-AUDIO_DURATION = TOTAL_SAMPLES / SAMPLE_RATE               # ~14.49s
+TOTAL_PIXELS = IMAGE_SIZE * IMAGE_SIZE                     # 65,536
+TOTAL_VALUES = TOTAL_PIXELS * CHANNELS                     # 196,608
+TOTAL_SAMPLES = TOTAL_VALUES * SAMPLES_PER_VALUE           # 2,555,904
+AUDIO_DURATION = TOTAL_SAMPLES / SAMPLE_RATE               # ~57.96s
 
 # --- Dark theme (GitHub-inspired) ---
 COLOR_BG = (13, 17, 23)
