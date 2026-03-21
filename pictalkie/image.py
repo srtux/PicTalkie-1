@@ -30,7 +30,7 @@ def extract_pixels_hilbert(img):
     Returns:
         List of TOTAL_VALUES ints (0-255): [R0, G0, B0, R1, G1, B1, ...].
     """
-    pixels = list(img.getdata())
+    pixels = list(img.get_flattened_data())
     order = get_hilbert_order(IMAGE_SIZE)
     values = []
     for x, y in order:

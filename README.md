@@ -314,6 +314,17 @@ The noise reduction follows the statistical law of large numbers: **SNR improvem
 4. The image builds pixel-by-pixel in sync with audio playback
 5. Click **Save Image as PNG** when complete
 
+## Testing
+
+Run the round-trip test to verify encoding and decoding produce a pixel-perfect result:
+
+```bash
+uv sync --group dev            # Install pytest (first time only)
+uv run pytest tests/ -v        # Run all tests
+```
+
+The test encodes `examples/flood.jpg` to `examples/sample.wav`, decodes it back to `examples/output.png`, and verifies every pixel matches the original.
+
 ## License
 
 This project was created for the Pittsburgh Regional Science & Engineering Fair.
