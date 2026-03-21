@@ -63,9 +63,10 @@ graph TD
         E2 --> E3["Pad to square with black bars\n(no cropping -- preserves full image)"]
         E3 --> E4["Resize to 256x256\n(Lanczos resampling)"]
         E4 --> E5["Extract R, G, B values\nin Hilbert curve order\n(65,536 pixels x 3 = 196,608 values)"]
-        E5 --> E6["Apply Baird formula to each value\namp = (value - 127) / 255 + 0.2\n(maps 0-255 to -0.3 ... +0.7)"]
-        E6 --> E7["Repeat each amplitude 13x\n(196,608 x 13 = 2,555,904 samples)"]
-        E7 --> E8["Write 16-bit PCM WAV\n44,100 Hz mono | 57.96 seconds"]
+        E5 --> E6["Build protocol message:\nPreamble | Calibration | Sync | Header | Pixel Data"]
+        E6 --> E7["Apply Baird formula to each value\namp = (value - 127) / 255 + 0.2\n(maps 0-255 to -0.3 ... +0.7)"]
+        E7 --> E8["Repeat each amplitude 13x\n(196,608 x 13 = 2,555,904 data samples)"]
+        E8 --> E9["Write 16-bit PCM WAV\n44,100 Hz mono | 61.17 seconds"]
     end
 
     subgraph Transmission["RADIO TRANSMISSION"]
@@ -76,15 +77,16 @@ graph TD
     subgraph Decoder["DECODER (Audio -> Image)"]
         direction TB
         D1["Load WAV file\n(supports 8/16/24/32-bit, stereo)"] --> D2["Normalize samples to -1.0 ... +1.0\n(extract first channel if stereo)"]
-        D2 --> D3["Chunk into groups of 13 samples"]
-        D3 --> D4["Average each group\n(cancels noise, recovers amplitude)\nSNR improvement = sqrt 13 ~ 3.6x"]
-        D4 --> D5["Apply inverse Baird formula\nvalue = (amp - 0.2) x 255 + 127\n(maps amplitude back to 0-255)"]
-        D5 --> D6["Clamp to 0-255 integer range"]
-        D6 --> D7["Place pixels on 256x256 grid\nvia inverse Hilbert curve mapping"]
-        D7 --> D8["Reconstruct RGB image\n256x256 pixels | 16.7M colors"]
+        D2 --> D3["Parse protocol:\nSkip preamble, read calibration,\nverify sync, read header"]
+        D3 --> D4["Build correction table\nfrom 256 calibration levels"]
+        D4 --> D5["Chunk pixel data into groups of 13"]
+        D5 --> D6["Average each group\n(cancels noise, recovers amplitude)\nSNR improvement = sqrt 13 ~ 3.6x"]
+        D6 --> D7["Map amplitude to pixel value\nvia calibration correction table"]
+        D7 --> D8["Place pixels on grid\nusing dimensions from header\nvia inverse Hilbert curve mapping"]
+        D8 --> D9["Reconstruct RGB image\n256x256 pixels | 16.7M colors"]
     end
 
-    E8 --> TX
+    E9 --> TX
     RX --> D1
 
     style Encoder fill:#1a1a2e,stroke:#ff6b35,color:#e6edf3
@@ -94,34 +96,65 @@ graph TD
 
 ## Audio Message Structure
 
-PicTalkie uses a headerless protocol -- the audio is a single continuous stream of pixel data with no framing, sync markers, or metadata. The entire WAV file is the message.
+PicTalkie wraps the pixel data in a self-describing protocol so the decoder can survive real-world radio conditions. The full message looks like this:
 
 ```
-|<---------------------------- 2,555,904 samples (57.96 seconds) ---------------------------->|
-|                                                                                              |
-| Pixel 1 (R)  | Pixel 1 (G)  | Pixel 1 (B)  | Pixel 2 (R)  | ...  | Pixel 65536 (B)        |
-| 13 samples    | 13 samples    | 13 samples    | 13 samples    |      | 13 samples             |
-| (all same amp)| (all same amp)| (all same amp)| (all same amp)|      | (all same amp)         |
+|<-------------------------------- 2,697,465 samples (61.17 seconds) -------------------------------->|
+|                                                                                                      |
+| Preamble | Gap | Calibration | Gap | Sync  | Gap | Header | Gap |         Pixel Data                |
+| 0.30s    |50ms | 2.56s       |50ms | 0.12s |50ms | 0.03s  |50ms |         57.96s                    |
 ```
 
-### What's in the stream
+### 1. Preamble (0.3s -- 13,230 samples)
 
-| #  | Component | Samples | Description |
-|----|-----------|---------|-------------|
-| 1  | **Pixel 1, Red** | 13 | Baird amplitude for the red channel of the first pixel (in Hilbert curve order) repeated 13 times |
-| 2  | **Pixel 1, Green** | 13 | Same for green channel |
-| 3  | **Pixel 1, Blue** | 13 | Same for blue channel |
-| 4  | **Pixel 2, Red** | 13 | Next pixel along the Hilbert curve |
-| ... | ... | ... | Continues for all 65,536 pixels x 3 channels |
-| 196,608 | **Pixel 65536, Blue** | 13 | Final value in the stream |
+A steady carrier tone at the baseline amplitude (0.2). Gives the walkie-talkie time to "wake up" -- radios have a slight delay before audio passes through, so this ensures the decoder doesn't miss the start. Also lets the decoder lock onto the signal level.
 
-**Total:** 196,608 values x 13 samples each = 2,555,904 samples
+### 2. Calibration (2.56s -- 112,896 samples)
 
-### Why no header or sync?
+Sends all 256 possible amplitude levels (pixel values 0-255) in order, each held for 441 samples (~10ms). The radio channel distorts amplitudes through volume changes, compression, and noise. The decoder measures what each level actually sounds like after transmission and builds a correction lookup table. Without this, dark grays and light grays would be indistinguishable after radio distortion.
 
-- **Simplicity:** The message is designed for analog walkie-talkie transmission where protocol overhead could get corrupted. Fewer moving parts means fewer failure modes.
-- **Fixed format:** Both sender and receiver know the exact format (256x256, RGB, 13 samples/value) so no metadata negotiation is needed.
-- **The decoder just starts reading:** It takes the raw samples, chunks them into groups of 13, averages each group, and maps back to pixel values. If the audio starts cleanly, the image reconstructs correctly.
+```
+| Level 0 (441 samples) | Level 1 (441 samples) | ... | Level 255 (441 samples) |
+| amp = -0.298          | amp = -0.294          | ... | amp = +0.702            |
+```
+
+### 3. Sync (0.12s -- 5,292 samples)
+
+An alternating low-high-low-high pattern (`0, 255, 0, 255, 0, 255`) that's easy to detect, each held for 882 samples. Tells the decoder "the header and image data start right after this." Without it, the decoder wouldn't know exactly where calibration ends and data begins, especially if radio timing drifts.
+
+### 4. Header (0.03s -- 1,323 samples)
+
+Three Baird-encoded values at 441 samples each: **width** (256), **height** (256), **channels** (3). The decoder reads these to know the image dimensions without hardcoding them -- both sides don't need to share any configuration.
+
+### 5. Gaps (50ms -- 2,205 samples each)
+
+Brief silences (amplitude 0.0) between each section so they don't bleed into each other. Four gaps total: after preamble, after calibration, after sync, and after header.
+
+### 6. Pixel Data (57.96s -- 2,555,904 samples)
+
+The image itself. Each of the 196,608 pixel values (65,536 pixels x 3 RGB channels) is Baird-encoded and repeated 13 times for noise resilience. Pixels are ordered along a Hilbert curve, not row-by-row.
+
+```
+| Pixel 1 R  | Pixel 1 G  | Pixel 1 B  | Pixel 2 R  | ...  | Pixel 65536 B  |
+| 13 samples | 13 samples | 13 samples | 13 samples | ...  | 13 samples     |
+```
+
+### Protocol overhead
+
+| Section     | Duration | Samples  | Purpose |
+|-------------|----------|----------|---------|
+| Preamble    | 0.30s    | 13,230   | Radio wake-up, carrier lock |
+| Gap         | 0.05s    | 2,205    | Section separator |
+| Calibration | 2.56s    | 112,896  | Amplitude correction table |
+| Gap         | 0.05s    | 2,205    | Section separator |
+| Sync        | 0.12s    | 5,292    | Alignment marker |
+| Gap         | 0.05s    | 2,205    | Section separator |
+| Header      | 0.03s    | 1,323    | Image dimensions |
+| Gap         | 0.05s    | 2,205    | Section separator |
+| Pixel data  | 57.96s   | 2,555,904| The image |
+| **Total**   | **61.17s** | **2,697,465** | |
+
+The protocol adds ~3.2 seconds of overhead to the ~58-second image transmission -- a small cost for reliable decoding over noisy radio channels.
 
 ## Key Specs
 
@@ -129,9 +162,10 @@ PicTalkie uses a headerless protocol -- the audio is a single continuous stream 
 |-----------------|------------------------|
 | Resolution      | 256 x 256 pixels       |
 | Color           | Full RGB (16.7M colors)|
-| Audio duration  | 57.96 seconds          |
+| Audio duration  | 61.17 seconds          |
 | Sample rate     | 44,100 Hz (CD quality) |
 | Noise resilience| 13x averaging (~3.6x SNR improvement) |
+| Calibration     | 256-level correction table from transmission |
 | Accuracy        | 100% on clean round-trip|
 | Format          | Standard 16-bit PCM WAV|
 

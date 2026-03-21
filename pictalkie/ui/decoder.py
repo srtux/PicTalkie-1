@@ -13,7 +13,7 @@ from ..constants import (
     TOTAL_PIXELS, TOTAL_VALUES, TOTAL_SAMPLES, AUDIO_DURATION,
     WINDOW_WIDTH, WINDOW_HEIGHT,
 )
-from ..audio import load_wav, decode_from_samples, _detect_samples_per_value
+from ..audio import load_wav, decode_from_samples, parse_protocol
 from ..hilbert import get_hilbert_order
 from ..image import reconstruct_image
 from .components import (
@@ -40,10 +40,18 @@ class DecoderScreen:
         self.decoding = False
         self.decoded = False
 
+        # Protocol state
+        self.image_width = IMAGE_SIZE
+        self.image_height = IMAGE_SIZE
+        self.image_channels = CHANNELS
+        self.total_pixels = TOTAL_PIXELS
+        self.total_values = TOTAL_VALUES
+        self.data_offset = 0
+        self.calibration = None
+
         # Live animation
         self.decode_start_time = None
         self.pixels_decoded = 0
-        self.spv = SAMPLES_PER_VALUE
         self.all_pixel_values = None
         self.hilbert_order = None
         self.live_surface = None
@@ -203,10 +211,7 @@ class DecoderScreen:
         self._reset_decode_state()
 
         duration = len(samples) / (sample_rate or SAMPLE_RATE)
-        n_values = len(samples) // SAMPLES_PER_VALUE
-        self.status_label.set_text(
-            f"Loaded: {source}  |  {duration:.2f}s  |  {n_values:,} values"
-        )
+        self.status_label.set_text(f"Loaded: {source}  |  {duration:.2f}s")
         self.waveform_surface = render_waveform_surface(samples, self.w - 120, 80)
         self.decode_btn.show()
         self.save_btn.hide()
@@ -220,6 +225,13 @@ class DecoderScreen:
         self.live_surface = None
         self.live_display = None
         self.pixels_decoded = 0
+        self.image_width = IMAGE_SIZE
+        self.image_height = IMAGE_SIZE
+        self.image_channels = CHANNELS
+        self.total_pixels = TOTAL_PIXELS
+        self.total_values = TOTAL_VALUES
+        self.data_offset = 0
+        self.calibration = None
 
     # --- Decoding ---
 
@@ -227,10 +239,27 @@ class DecoderScreen:
         if self.wav_samples is None:
             return
         try:
-            self.spv = _detect_samples_per_value(self.wav_samples)
-            self.all_pixel_values = decode_from_samples(self.wav_samples, self.spv)
-            self.hilbert_order = get_hilbert_order(IMAGE_SIZE)
-            self.live_surface = pygame.Surface((IMAGE_SIZE, IMAGE_SIZE))
+            protocol = parse_protocol(self.wav_samples)
+            if protocol is not None:
+                self.image_width = protocol['width']
+                self.image_height = protocol['height']
+                self.image_channels = protocol['channels']
+                self.data_offset = protocol['data_offset']
+                self.calibration = protocol['calibration']
+                data = self.wav_samples[self.data_offset:]
+            else:
+                self.data_offset = 0
+                self.calibration = None
+                data = self.wav_samples
+
+            self.total_pixels = self.image_width * self.image_height
+            self.total_values = self.total_pixels * self.image_channels
+
+            self.all_pixel_values = decode_from_samples(
+                data, SAMPLES_PER_VALUE, self.calibration
+            )
+            self.hilbert_order = get_hilbert_order(self.image_width)
+            self.live_surface = pygame.Surface((self.image_width, self.image_height))
             self.live_surface.fill(COLOR_BLACK)
 
             play_audio(self.wav_samples, "_temp_pictalkie_decode.wav")
@@ -255,15 +284,23 @@ class DecoderScreen:
             return
 
         elapsed = time.time() - self.decode_start_time
-        total_duration = len(self.wav_samples) / (self.wav_sample_rate or SAMPLE_RATE)
-        progress = min(elapsed / total_duration, 1.0) if total_duration > 0 else 1.0
-        target_pixels = min(int(progress * TOTAL_PIXELS), TOTAL_PIXELS)
+        sr = self.wav_sample_rate or SAMPLE_RATE
+        total_duration = len(self.wav_samples) / sr
+        protocol_duration = self.data_offset / sr
+        data_duration = total_duration - protocol_duration
+
+        if elapsed < protocol_duration:
+            target_pixels = 0
+        else:
+            data_elapsed = elapsed - protocol_duration
+            progress = min(data_elapsed / data_duration, 1.0) if data_duration > 0 else 1.0
+            target_pixels = min(int(progress * self.total_pixels), self.total_pixels)
 
         if target_pixels > self.pixels_decoded:
             for p in range(self.pixels_decoded, target_pixels):
                 if p < len(self.hilbert_order):
                     hx, hy = self.hilbert_order[p]
-                    base = p * CHANNELS
+                    base = p * self.image_channels
                     if base + 2 < len(self.all_pixel_values):
                         self.live_surface.set_at((hx, hy), (
                             self.all_pixel_values[base],
@@ -272,17 +309,19 @@ class DecoderScreen:
                         ))
             self.pixels_decoded = target_pixels
             self.live_display = pygame.transform.scale(self.live_surface, (256, 256))
-            pct = (self.pixels_decoded / TOTAL_PIXELS) * 100
-            self.progress_label.set_text(f"{self.pixels_decoded:,} / {TOTAL_PIXELS:,} pixels  ({pct:.0f}%)")
+            pct = (self.pixels_decoded / self.total_pixels) * 100
+            self.progress_label.set_text(f"{self.pixels_decoded:,} / {self.total_pixels:,} pixels  ({pct:.0f}%)")
 
-        if self.pixels_decoded >= TOTAL_PIXELS:
+        if self.pixels_decoded >= self.total_pixels:
             self.decoding = False
             self.decoded = True
-            self.decoded_image = reconstruct_image(self.all_pixel_values)
+            self.decoded_image = reconstruct_image(
+                self.all_pixel_values, self.image_width, self.image_channels
+            )
             self.decoded_surface = self.live_display
             self.save_btn.show()
             self.progress_label.set_text(
-                f"{IMAGE_SIZE}x{IMAGE_SIZE} RGB  |  {TOTAL_PIXELS:,} pixels  |  {TOTAL_VALUES:,} values decoded"
+                f"{self.image_width}x{self.image_height} RGB  |  {self.total_pixels:,} pixels  |  {self.total_values:,} values decoded"
             )
 
         if self.playing_audio and not is_audio_playing():
