@@ -8,14 +8,14 @@ This document outlines the module structure and the engineering logic behind the
 
 | Module | Purpose |
 | :--- | :--- |
-| **`baird.py`** | Implementation of the Forward and Inverse **Baird Amplitude** mapping formulas. |
+| **`baird.py`** | Forward and Inverse **Baird Amplitude** mapping formulas (scalar and vectorized NumPy variants). |
 | **`hilbert.py`** | Logic for converting linear pixel indices into 2D coordinates using the **Hilbert Space-Filling Curve**. |
 | **`image.py`** | Image processing pipeline: loading, padding to square, resizing, and pixel extraction/reconstruction. |
-| **`audio.py`** | Digital Signal Processing (DSP) core: WAV file handling, **AFSK** header encoding/decoding, and **Vector Cross-Correlation** sync logic. |
+| **`audio.py`** | Digital Signal Processing (DSP) core: WAV file handling (with automatic sample-rate resampling), **AFSK** header encoding/decoding, and **Vector Cross-Correlation** sync logic. |
 | **`constants.py`** | Single source of truth for all tunable parameters, colors, and layout metrics. |
 | **`app.py`** | Main entry point; initializes Pygame/GUI, handles the screen dispatch loop, and manages temporary cleanup. |
 | **`theme.json`** | Dark UI configuration (colors, fonts, borders) for the `pygame_gui` system. |
-| **`ui/components.py`** | Reusable UI components: Waveform displays, audio playback controllers, and microphone recording helpers (PyAudio/NumPy). |
+| **`ui/components.py`** | Reusable UI components: Waveform displays, audio playback controllers, and microphone recording helpers (sounddevice/NumPy). |
 | **`ui/home.py`** | Application navigation hub. |
 | **`ui/encoder.py`** | Image-to-audio workspace: selection, processing, and playback. |
 | **`ui/decoder.py`** | Audio-to-image workspace: supports loading WAV files or live microphone capture with real-time reconstruction. |

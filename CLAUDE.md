@@ -16,9 +16,9 @@ uv run pytest tests/test_round_trip.py -v  # Run single test
 
 PicTalkie transmits images as audio over walkie-talkies. The pipeline is:
 
-**Encode:** Image → pad to square → resize to 256x256 → extract RGB in Hilbert curve order → Baird amplitude formula → repeat each value 13x → wrap in protocol (preamble, calibration, sync, header, gaps) → 16-bit PCM WAV
+**Encode:** Image → pad to square → resize to 256x256 → extract RGB in Hilbert curve order → Baird amplitude formula → repeat each value 13x → wrap in protocol (VOX wakeup, chirp, AFSK header, calibration, gaps) → 16-bit PCM WAV
 
-**Decode:** WAV → parse protocol → build calibration correction table → average each 13-sample group → map amplitudes to pixel values → place on 2D grid via inverse Hilbert curve → RGB image
+**Decode:** WAV → find chirp sync → demodulate AFSK header → read calibration → average each 13-sample group → map amplitudes to pixel values via calibration correction → place on 2D grid via inverse Hilbert curve → RGB image
 
 ### Module roles
 
@@ -32,7 +32,7 @@ PicTalkie transmits images as audio over walkie-talkies. The pipeline is:
 
 ### Audio protocol structure
 
-The WAV message is self-describing: `Preamble (0.3s) | Gap | Calibration (2.56s, 256 levels) | Gap | Sync (0.12s, alternating 0/255) | Gap | Header (0.03s, width/height/channels) | Gap | Pixel Data (~58s)`. The decoder auto-detects the protocol; if absent, falls back to legacy headerless format.
+The WAV message is self-describing: `VOX Wakeup (0.5s, 1500 Hz tone) | Chirp (0.12s, 1-3 kHz sweep) | Gap | AFSK Header (0.48s, width/height/channels/checksum) | Gap | Calibration (2.56s, 256 levels) | Gap | Pixel Data (~58s)`. The decoder auto-detects the protocol via chirp correlation; if absent, falls back to legacy headerless format.
 
 ### Key conventions
 

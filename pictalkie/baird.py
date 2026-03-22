@@ -10,6 +10,8 @@ distinguishable from silence.
     Inverse:  value = (amplitude - 0.2) * 255 + 127
 """
 
+import numpy as np
+
 
 def baird_amplitude(value):
     """Convert a pixel value (0-255) to a Baird audio amplitude (-1 to +1)."""
@@ -21,3 +23,14 @@ def inverse_baird(amp):
     """Convert a Baird amplitude back to a pixel value (0-255)."""
     value = round((amp - 0.2) * 255 + 127)
     return max(0, min(255, value))
+
+
+def baird_amplitude_array(values):
+    """Vectorized forward Baird: pixel values (0-255) -> amplitudes (-1 to +1)."""
+    arr = np.asarray(values, dtype=np.float32)
+    return np.clip((arr - 127) / 255 + 0.2, -1.0, 1.0)
+
+
+def inverse_baird_array(amplitudes):
+    """Vectorized inverse Baird: amplitudes -> pixel values (0-255)."""
+    return np.clip(np.round((amplitudes - 0.2) * 255 + 127), 0, 255).astype(int)

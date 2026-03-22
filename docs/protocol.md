@@ -107,5 +107,5 @@ sequenceDiagram
 | **AFSK Header** | $0.48\text{s}$ | $21,168$ | Mark: $2200\text{Hz}$ \| Space: $1200\text{Hz}$ (48-bits) |
 | **Calibration** | $2.56\text{s}$ | $112,896$ | $256$ Multi-level analog steps |
 | **Pixel Data** | $\sim 57.96\text{s}$ | $2,555,904$ | Baird-encoded analog repetition code |
-| **Total Duration** | $\mathbf{61.67\text{s}}$ | $\mathbf{2,722,332}$ | |
+| **Total Duration** | $\mathbf{\sim 61.77\text{s}}$ | $\mathbf{2,723,925}$ | |
 

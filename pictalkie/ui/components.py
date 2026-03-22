@@ -6,7 +6,7 @@ import numpy as np
 import pygame
 
 from ..constants import COLOR_ACCENT, COLOR_GREEN, SAMPLE_RATE
-from ..audio import save_wav
+from ..audio import save_wav, resample
 
 
 def pil_to_pygame(pil_image):
@@ -75,6 +75,9 @@ class MicRecorder:
         recorder.start()
         # ... wait ...
         samples = recorder.stop()  # returns float32 numpy array at SAMPLE_RATE Hz
+
+    For streaming access during recording, use get_samples() or get_recent_samples().
+    All public methods return audio resampled to SAMPLE_RATE Hz.
     """
 
     def __init__(self):
@@ -82,11 +85,18 @@ class MicRecorder:
         self._chunks = []
         self._stream = None
         self._device_rate = None
+        self._sample_count = 0
+        # Incremental resampling cache: avoids re-processing all chunks each frame
+        self._cache = np.array([], dtype=np.float32)
+        self._chunks_cached = 0
 
     def start(self):
         """Start recording from the default microphone."""
         import sounddevice as sd
         self._chunks = []
+        self._sample_count = 0
+        self._cache = np.array([], dtype=np.float32)
+        self._chunks_cached = 0
         self.recording = True
 
         # Use the mic's native sample rate to avoid driver resampling issues
@@ -106,6 +116,19 @@ class MicRecorder:
         """Called by sounddevice for each audio block."""
         if self.recording:
             self._chunks.append(indata[:, 0].copy())
+            self._sample_count += len(indata)
+
+    def _update_cache(self):
+        """Resample any new chunks and append to the cache."""
+        n = len(self._chunks)
+        if n <= self._chunks_cached:
+            return
+        new_chunks = self._chunks[self._chunks_cached:]
+        self._chunks_cached = n
+        raw = np.concatenate(new_chunks)
+        if self._device_rate and self._device_rate != SAMPLE_RATE:
+            raw = resample(raw, self._device_rate, SAMPLE_RATE)
+        self._cache = np.concatenate([self._cache, raw]) if len(self._cache) else raw
 
     def stop(self):
         """Stop recording and return samples as float32 array at SAMPLE_RATE Hz."""
@@ -118,33 +141,53 @@ class MicRecorder:
         if not self._chunks:
             return np.array([], dtype=np.float32)
 
-        raw = np.concatenate(self._chunks)
-        self._chunks = []
+        self._update_cache()
+        result = self._cache.copy()
 
-        # Resample to SAMPLE_RATE if mic uses a different rate
-        if self._device_rate and self._device_rate != SAMPLE_RATE:
-            raw = _resample(raw, self._device_rate, SAMPLE_RATE)
+        self._chunks = []
+        self._sample_count = 0
+        self._cache = np.array([], dtype=np.float32)
+        self._chunks_cached = 0
 
         # Normalize: scale peak amplitude to match encoder's range (~0.7 max)
-        peak = np.max(np.abs(raw))
+        peak = np.max(np.abs(result))
         if peak > 0.001:
-            raw = raw * (0.7 / peak)
+            result = result * (0.7 / peak)
 
-        return raw
+        return result
+
+    @property
+    def has_data(self):
+        """True if any audio chunks have been recorded."""
+        return self._sample_count > 0
 
     @property
     def elapsed_seconds(self):
         """How many seconds of audio have been recorded so far."""
-        if not self._chunks:
+        if self._sample_count == 0:
             return 0.0
-        total = sum(len(c) for c in self._chunks)
-        return total / (self._device_rate or SAMPLE_RATE)
+        return self._sample_count / (self._device_rate or SAMPLE_RATE)
+
+    def get_samples(self):
+        """Return all recorded samples resampled to SAMPLE_RATE Hz.
+
+        Uses an incremental cache — only new chunks are resampled each call.
+        Returns None if no data recorded yet.
+        """
+        if not self._chunks:
+            return None
+        self._update_cache()
+        return self._cache
+
+    def get_recent_samples(self, max_chunks=50):
+        """Return the most recent chunks concatenated (for live waveform display).
+
+        Returns raw device-rate samples (not resampled) for display only.
+        Returns None if no data recorded yet.
+        """
+        if not self._chunks:
+            return None
+        recent = self._chunks[-max_chunks:]
+        return np.concatenate(recent)
 
 
-def _resample(samples, from_rate, to_rate):
-    """Resample audio using linear interpolation."""
-    duration = len(samples) / from_rate
-    n_out = int(duration * to_rate)
-    x_old = np.linspace(0, duration, len(samples), endpoint=False)
-    x_new = np.linspace(0, duration, n_out, endpoint=False)
-    return np.interp(x_new, x_old, samples).astype(np.float32)

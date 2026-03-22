@@ -7,7 +7,7 @@ Decoding pipeline:
     WAV samples -> parse protocol -> calibration correction -> pixel values
 
 Protocol message structure:
-    Preamble | Gap | Calibration | Gap | Header | Gap | Pixel Data
+    VOX Wakeup | Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
 """
 
 import wave
@@ -25,6 +25,7 @@ from .constants import (
     PROTOCOL_SAMPLES,
 )
 
+from .baird import baird_amplitude_array, inverse_baird_array
 from .image import reconstruct_image
 
 
@@ -98,7 +99,7 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
     """Encode pixel values into a full protocol message.
 
     Message structure:
-        Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
+        VOX Wakeup | Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
 
     Returns:
         numpy float32 array of the complete audio message.
@@ -129,14 +130,12 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
     parts.append(gap)
 
     # 3. Calibration -- all 256 amplitude levels in order
-    cal_values = np.arange(CALIBRATION_LEVELS, dtype=np.float32)
-    cal_amps = np.clip((cal_values - 127) / 255 + 0.2, -1.0, 1.0)
+    cal_amps = baird_amplitude_array(np.arange(CALIBRATION_LEVELS))
     parts.append(np.repeat(cal_amps, CALIBRATION_SPV))
     parts.append(gap)
 
     # 4. Pixel data -- Baird-encoded values with repetition for noise resilience
-    values = np.asarray(pixel_values, dtype=np.float32)
-    amplitudes = np.clip((values - 127) / 255 + 0.2, -1.0, 1.0)
+    amplitudes = baird_amplitude_array(pixel_values)
     parts.append(np.repeat(amplitudes, SAMPLES_PER_VALUE))
 
     return np.concatenate(parts)
@@ -160,15 +159,16 @@ def save_wav(samples, filepath):
 def load_wav(filepath):
     """Load a WAV file, normalize to float32 (-1 to +1), extract first channel.
 
+    Resamples to SAMPLE_RATE if the file uses a different rate.
     Supports 8, 16, 24, and 32-bit WAV files.
 
     Returns:
-        (samples, sample_rate) tuple.
+        (samples, sample_rate) tuple — sample_rate is always SAMPLE_RATE.
     """
     with wave.open(filepath, 'r') as wf:
         n_channels = wf.getnchannels()
         sample_width = wf.getsampwidth()
-        sample_rate = wf.getframerate()
+        file_rate = wf.getframerate()
         raw_data = wf.readframes(wf.getnframes())
 
     samples = _normalize_samples(raw_data, sample_width)
@@ -176,7 +176,10 @@ def load_wav(filepath):
     if n_channels > 1:
         samples = samples[::n_channels]
 
-    return samples, sample_rate
+    if file_rate != SAMPLE_RATE:
+        samples = resample(samples, file_rate, SAMPLE_RATE)
+
+    return samples, SAMPLE_RATE
 
 
 def _normalize_samples(raw_data, sample_width):
@@ -205,6 +208,15 @@ def _decode_24bit(raw_data):
             value -= 0x1000000
         samples[i] = value / 8388608.0
     return samples
+
+
+def resample(samples, from_rate, to_rate):
+    """Resample audio using linear interpolation."""
+    duration = len(samples) / from_rate
+    n_out = int(duration * to_rate)
+    x_old = np.linspace(0, duration, len(samples), endpoint=False)
+    x_new = np.linspace(0, duration, n_out, endpoint=False)
+    return np.interp(x_new, x_old, samples).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +304,7 @@ def decode_from_samples(samples, samples_per_value=SAMPLES_PER_VALUE, calibratio
     if calibration is not None:
         pixel_values = _apply_correction(amplitudes, calibration)
     else:
-        pixel_values = np.clip(np.round((amplitudes - 0.2) * 255 + 127), 0, 255).astype(int)
+        pixel_values = inverse_baird_array(amplitudes)
 
     return pixel_values.tolist()
 
@@ -328,7 +340,7 @@ def decode_wav_file(filepath):
     if protocol is not None:
         data = samples[protocol['data_offset']:]
         pixel_values = decode_from_samples(data, SAMPLES_PER_VALUE, protocol['calibration'])
-        return reconstruct_image(pixel_values, protocol['width'], protocol['channels'])
+        return reconstruct_image(pixel_values, protocol['width'], protocol['channels'], protocol['height'])
 
     # Legacy format (no protocol)
     spv = _detect_samples_per_value(samples)

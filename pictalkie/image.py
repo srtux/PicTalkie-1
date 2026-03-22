@@ -39,24 +39,33 @@ def extract_pixels_hilbert(img):
     return values
 
 
-def reconstruct_image(pixel_values, image_size=IMAGE_SIZE, channels=CHANNELS):
+def reconstruct_image(pixel_values, width=IMAGE_SIZE, channels=CHANNELS, height=None):
     """Place decoded pixel values back onto a 2D grid using inverse Hilbert mapping.
 
     Args:
         pixel_values: Flat list of ints (0-255) in Hilbert order.
+        width: Image width (must be power of 2 for Hilbert curve).
+        channels: Number of color channels (1 for grayscale, 3 for RGB).
+        height: Image height. Defaults to width (square image).
 
     Returns:
-        PIL Image (image_size x image_size, RGB).
+        PIL Image (width x height, RGB).
     """
-    img = Image.new("RGB", (image_size, image_size), (0, 0, 0))
+    if height is None:
+        height = width
+    img = Image.new("RGB", (width, height), (0, 0, 0))
     pixels = img.load()
-    order = get_hilbert_order(image_size)
-    n_pixels = min(image_size * image_size, len(pixel_values) // channels)
+    order = get_hilbert_order(width)
+    n_pixels = min(width * height, len(pixel_values) // channels)
 
     for d in range(n_pixels):
         x, y = order[d]
         base = d * channels
-        if base + 2 < len(pixel_values):
-            pixels[x, y] = (pixel_values[base], pixel_values[base + 1], pixel_values[base + 2])
+        if base + channels <= len(pixel_values):
+            if channels == 1:
+                v = pixel_values[base]
+                pixels[x, y] = (v, v, v)
+            else:
+                pixels[x, y] = (pixel_values[base], pixel_values[base + 1], pixel_values[base + 2])
 
     return img
