@@ -260,7 +260,6 @@ def parse_protocol(samples):
 
     calc_checksum = (width ^ height ^ channels) & 0xFF
     if checksum != calc_checksum:
-        print(f"Rejecting frame: Header checksum failed ({checksum} != {calc_checksum})")
         return None
 
     offset += HEADER_SAMPLES + GAP_SAMPLES
