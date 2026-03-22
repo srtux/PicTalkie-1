@@ -1,6 +1,8 @@
 """Encoder screen: select image, preview, encode to audio, play/save."""
 
 import time
+from pathlib import Path
+
 import pygame
 import pygame_gui
 from pygame_gui.windows import UIFileDialog
@@ -75,6 +77,7 @@ class EncoderScreen:
         self.encode_btn.hide()
         self.play_btn.hide()
         self.save_btn.hide()
+        self._auto_loaded = False
 
     def _btn(self, x, y, w, h, text, obj_id=None):
         btn = pygame_gui.elements.UIButton(
@@ -93,6 +96,14 @@ class EncoderScreen:
         return lbl
 
     def show(self):
+        # One-shot: auto-load example image on first open for quick testing
+        if not self._auto_loaded:
+            self._auto_loaded = True
+            example = Path(__file__).resolve().parent.parent.parent / "examples" / "test_image.png"
+            if example.exists():
+                self._load_image(str(example))
+                self._encode()
+
         for el in self.elements:
             el.show()
         self.encode_btn.hide()
@@ -133,8 +144,11 @@ class EncoderScreen:
                     path = event.text
                     if not path.endswith(".wav"):
                         path += ".wav"
-                    save_wav(self.encoded_samples, path)
-                    self.status_label.set_text(f"Saved: {path}")
+                    try:
+                        save_wav(self.encoded_samples, path)
+                        self.status_label.set_text(f"Saved: {path}")
+                    except Exception as e:
+                        self.status_label.set_text(f"Save error: {e}")
 
         return None
 
@@ -178,15 +192,18 @@ class EncoderScreen:
     def _encode(self):
         if not self.processed_image:
             return
-        pixel_values = extract_pixels_hilbert(self.processed_image)
-        self.encoded_samples = encode_to_samples(pixel_values)
-        self.encoded = True
-        self.encode_btn.hide()
-        self.play_btn.show()
-        self.save_btn.show()
-        self.status_label.set_text(
-            f"Encoded: {AUDIO_DURATION:.2f}s | {TOTAL_SAMPLES:,} samples | {TOTAL_VALUES:,} values"
-        )
+        try:
+            pixel_values = extract_pixels_hilbert(self.processed_image)
+            self.encoded_samples = encode_to_samples(pixel_values)
+            self.encoded = True
+            self.encode_btn.hide()
+            self.play_btn.show()
+            self.save_btn.show()
+            self.status_label.set_text(
+                f"Encoded: {AUDIO_DURATION:.2f}s | {TOTAL_SAMPLES:,} samples | {TOTAL_VALUES:,} values"
+            )
+        except Exception as e:
+            self.status_label.set_text(f"Encode Error: {e}")
 
     def _toggle_playback(self):
         if self.playing:

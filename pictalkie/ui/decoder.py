@@ -18,7 +18,13 @@ from ..constants import (
     BUTTON_ROW_Y, BUTTON_H, BUTTON_H_SM, LABEL_H,
     DIALOG_X, DIALOG_Y, DIALOG_W, DIALOG_H,
 )
-from ..audio import load_wav, decode_from_samples, parse_protocol
+from ..audio import (
+    load_wav,
+    decode_from_samples,
+    normalize_decode_samples,
+    parse_protocol,
+    _apply_bandpass_filter,
+)
 from ..hilbert import get_hilbert_order
 from ..image import reconstruct_image
 from .components import (
@@ -172,8 +178,11 @@ class DecoderScreen:
                     path = event.text
                     if not path.endswith(".png"):
                         path += ".png"
-                    self.decoded_image.save(path)
-                    self.status_label.set_text(f"Saved: {path}")
+                    try:
+                        self.decoded_image.save(path)
+                        self.status_label.set_text(f"Saved: {path}")
+                    except Exception as e:
+                        self.status_label.set_text(f"Save error: {e}")
 
         return None
 
@@ -232,14 +241,14 @@ class DecoderScreen:
 
     def _load_samples(self, samples, sample_rate, source=""):
         """Common path for loading audio from WAV or microphone."""
-        self.wav_samples = samples
-        self.wav_sample_rate = sample_rate
+        self.wav_samples = normalize_decode_samples(samples, sample_rate)
+        self.wav_sample_rate = SAMPLE_RATE
         self._reset_decode_state()
 
         duration = len(samples) / (sample_rate or SAMPLE_RATE)
         self.status_label.set_text(f"Loaded: {source}  |  {duration:.2f}s")
         self.waveform_surface = render_waveform_surface(
-            samples, self.w - 2 * CONTENT_INSET, WAVE_H,
+            self.wav_samples, self.w - 2 * CONTENT_INSET, WAVE_H,
         )
         self.decode_btn.show()
         self.save_btn.hide()
@@ -262,6 +271,8 @@ class DecoderScreen:
         self.calibration = None
         self.stream_synced = False
         self.protocol_info = None
+        self._last_chunk_count = 0
+        self._resampled_cache = None
 
     # --- Decoding ---
 
@@ -310,8 +321,27 @@ class DecoderScreen:
             self.progress_label.set_text(f"Recording: {elapsed:.1f}s  (expected: ~{expected:.0f}s)")
 
             if self.mic._chunks:
-                current_samples = np.concatenate(self.mic._chunks)
-                
+                # Continuous resampling over full buffer to avoid phase-drift rounding errors
+                n_chunks = len(self.mic._chunks)
+                if n_chunks > self._last_chunk_count:
+                    self._last_chunk_count = n_chunks
+                    current_raw = np.concatenate(self.mic._chunks)
+                    device_rate = self.mic._device_rate or SAMPLE_RATE
+                    if device_rate != SAMPLE_RATE:
+                        from .components import _resample
+                        current_samples = _resample(current_raw, device_rate, SAMPLE_RATE)
+                    else:
+                        current_samples = current_raw
+
+                    current_samples = _apply_bandpass_filter(current_samples)
+                    self._resampled_cache = current_samples
+
+
+                current_samples = self._resampled_cache
+                if current_samples is None:
+                    return
+
+
                 if not self.stream_synced:
                     protocol = parse_protocol(current_samples)
                     if protocol:
@@ -330,8 +360,25 @@ class DecoderScreen:
 
                 if self.stream_synced:
                     data = current_samples[self.protocol_info['data_offset']:]
-                    self.all_pixel_values = decode_from_samples(data, SAMPLES_PER_VALUE, self.protocol_info['calibration'])
-                    
+
+                    # Decode only the tail we haven't decoded yet
+                    already = len(self.all_pixel_values) if self.all_pixel_values else 0
+                    skip_samples = already * SAMPLES_PER_VALUE
+                    if skip_samples < len(data):
+                        new_vals = decode_from_samples(
+                            data[skip_samples:], SAMPLES_PER_VALUE,
+                            self.protocol_info['calibration'],
+                        )
+
+
+                        if self.all_pixel_values is None:
+                            self.all_pixel_values = new_vals
+                        else:
+                            self.all_pixel_values.extend(new_vals)
+
+                    if self.all_pixel_values is None:
+                        return
+
                     target_pixels = min(len(self.all_pixel_values) // self.image_channels, self.total_pixels)
                     
                     if target_pixels > self.pixels_decoded:
@@ -339,12 +386,17 @@ class DecoderScreen:
                             if p < len(self.hilbert_order):
                                 hx, hy = self.hilbert_order[p]
                                 base = p * self.image_channels
-                                if base + 2 < len(self.all_pixel_values):
-                                    self.live_surface.set_at((hx, hy), (
-                                        self.all_pixel_values[base],
-                                        self.all_pixel_values[base + 1],
-                                        self.all_pixel_values[base + 2],
-                                    ))
+                                if self.image_channels == 1:
+                                    if base < len(self.all_pixel_values):
+                                        v = self.all_pixel_values[base]
+                                        self.live_surface.set_at((hx, hy), (v, v, v))
+                                else:
+                                    if base + 2 < len(self.all_pixel_values):
+                                        self.live_surface.set_at((hx, hy), (
+                                            self.all_pixel_values[base],
+                                            self.all_pixel_values[base + 1],
+                                            self.all_pixel_values[base + 2],
+                                        ))
                         self.pixels_decoded = target_pixels
                         self.live_display = pygame.transform.scale(self.live_surface, (DISPLAY_SIZE, DISPLAY_SIZE))
                         pct = (self.pixels_decoded / self.total_pixels) * 100
@@ -384,12 +436,17 @@ class DecoderScreen:
                 if p < len(self.hilbert_order):
                     hx, hy = self.hilbert_order[p]
                     base = p * self.image_channels
-                    if base + 2 < len(self.all_pixel_values):
-                        self.live_surface.set_at((hx, hy), (
-                            self.all_pixel_values[base],
-                            self.all_pixel_values[base + 1],
-                            self.all_pixel_values[base + 2],
-                        ))
+                    if self.image_channels == 1:
+                        if base < len(self.all_pixel_values):
+                            v = self.all_pixel_values[base]
+                            self.live_surface.set_at((hx, hy), (v, v, v))
+                    else:
+                        if base + 2 < len(self.all_pixel_values):
+                            self.live_surface.set_at((hx, hy), (
+                                self.all_pixel_values[base],
+                                self.all_pixel_values[base + 1],
+                                self.all_pixel_values[base + 2],
+                            ))
             self.pixels_decoded = target_pixels
             self.live_display = pygame.transform.scale(
                 self.live_surface, (DISPLAY_SIZE, DISPLAY_SIZE),
@@ -442,8 +499,8 @@ class DecoderScreen:
                 from .components import draw_waveform
                 draw_waveform(surface, recent_samples, CONTENT_INSET, WAVE_Y, wave_w, WAVE_H, color=COLOR_ACCENT)
 
-        # Live image reconstruction
-        display_surf = self.live_display if self.decoding else self.decoded_surface
+        # Live image reconstruction (during mic recording, WAV decode, or after completion)
+        display_surf = self.live_display if (self.decoding or self.mic_recording) else self.decoded_surface
         if display_surf:
             img_x = self.w // 2 - DISPLAY_SIZE // 2
             border_size = DISPLAY_SIZE + 2 * BORDER_WIDTH

@@ -27,6 +27,7 @@ For complete technical specs, protocols, and logic flows, see the `docs/` direct
 
 -   [**Protocol Specification**](docs/protocol.md): Details sync Chirps, AFSK digital metadata headers, Calibration clamps, and analog frame scaling.
 -   [**Core Algorithms**](docs/algorithms.md): Explains Vector Cross-Correlation synchronisation locks, snaked Hilbert space pixel order maps, and Baird Amplitude mappings.
+-   [**Architecture & Design**](docs/architecture.md): Module responsibilities, SNR repetition code (13x), and resolution (256x256) decisions.
 
 ---
 
@@ -60,6 +61,7 @@ reconstructed.save("photo_decoded.png")
 | Sync type       | Linear Chirp Frequency sweep |
 | Header depth    | AFSK Digital Mode      |
 | Frame mapping   | Analog Baird Formula   |
+| Sample Rate     | 44.1 kHz (Native / 48 kHz Resampling) |
 
 ---
 
@@ -76,6 +78,15 @@ reconstructed.save("photo_decoded.png")
 2. Click **DECODE TO IMAGE** to trigger pixel animation reconstruction outputs.
 
 ## Testing
+
+Run the full round-trip verification:
+
 ```bash
 uv run pytest tests/ -v
 ```
+
+---
+
+## Credits
+
+All algorithms (Baird mapping, Hilbert traversal, AFSK sync) were customized specifically for high-noise radio propagation.

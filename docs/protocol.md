@@ -20,13 +20,13 @@ Because radios can be noisy and cut out, PicTalkie wraps the image in a special 
 
 ---
 
-## 🎵 3. The Digital Secret Header
-*   **Analogy**: **Sending a message by whistling high and low notes.**
-*   **What sounds like**: Fast high-pitched birds chirps.
+## 🎵 3. The Digital Secret Header (DPSK)
+*   **Analogy**: **Sending a message by continuous vs flipped whistle pulses.**
+*   **What sounds like**: Fast high-pitched buzzes.
 *   **How it works**: Modern computers talk in Binary (1s and 0s). 
-    *   If the computer whistles a **High note** (2200 Hz), that means **"1"**.
-    *   If it whistles a **Low note** (1200 Hz), that means **"0"**.
-*   **Why do we use it**: We use this digital Morse code to shout: *"Hey! This image is 256 pixels wide, 256 pixels tall, and has 3 color layers (Red, Green, Blue)."* Now the receiver knows how big to draw the picture frame!
+    *   If the tone **flips upside down (phase inversion)**, that means **"1"**.
+    *   If it continues **exactly the same**, that means **"0"**.
+*   **Why do we use it**: We use this digital differential code to shout: *"Hey! This image is 256 pixels wide, 256 pixels tall, and has 3 color layers (Red, Green, Blue)."* Because it only looks at phase changes, it easily survives room static and volume clipping!
 
 ---
 
@@ -44,7 +44,7 @@ Because radios can be noisy and cut out, PicTalkie wraps the image in a special 
 
 ---
 
-**Total Song Length**: Under 1 Minute of Airtime!
+**Total Song Length**: About 1 Minute of Airtime!
 By packing reliable digital guides at the front, the analog tail can survive almost anything!
 
 ---
@@ -61,7 +61,7 @@ graph LR
         direction LR
         A["VOX Wakeup<br>0.5s"] --> B["Chirp Sync<br>0.12s"]
         B --> C["Gap<br>50ms"]
-        C --> D["AFSK Header<br>0.48s"]
+        C --> D["DPSK Header<br>1.47s"]
         D --> E["Gap<br>50ms"]
         E --> F["Calibration<br>2.56s"]
         F --> G["Gap<br>50ms"]
@@ -100,12 +100,20 @@ sequenceDiagram
 
 | Parameter | Relative Duration | Absolute Samples | Technical Spec |
 | :--- | :--- | :--- | :--- |
-| **Sample Rate** | - | $44,100 \text{ Hz}$ | 16-bit PCM Mono |
+| **Sample Rate** | - | $44,100 \text{ Hz}$ | Native 16-bit PCM Mono (encoded) |
 | **VOX Wakeup** | $0.5\text{s}$ | $22,050$ | $1,500\text{ Hz}$ Continuous |
 | **Sync Chirp** | $0.12\text{s}$ | $5,292$ | $1,000 \rightarrow 3,000\text{ Hz}$ Sweep |
 | **Gap Silence** | $0.05\text{s}$ | $2,205$ | $0.0$ Amplitude buffer |
 | **AFSK Header** | $0.48\text{s}$ | $21,168$ | Mark: $2200\text{Hz}$ \| Space: $1200\text{Hz}$ (48-bits) |
 | **Calibration** | $2.56\text{s}$ | $112,896$ | $256$ Multi-level analog steps |
 | **Pixel Data** | $\sim 57.96\text{s}$ | $2,555,904$ | Baird-encoded analog repetition code |
-| **Total Duration** | $\mathbf{61.67\text{s}}$ | $\mathbf{2,722,332}$ | |
+| **Total Duration** | $\mathbf{61.72\text{s}}$ | $\mathbf{2,723,925}$ | |
+
+---
+
+## 🛠️ Sample Rate Resilience
+
+While the PicTalkie protocol is fundamentally tuned for a **44.1 kHz** sample rate (matching standard CD quality), many modern mobile phones and microphones record at **48 kHz**.
+
+To ensure compatibility across all devices, the decoder performs a high-quality **FFT-based resampling** of any 48 kHz (or other rate) WAV files back to 44.1 kHz before beginning the synchronization and decoding steps. This ensures that the time-sensitive chirp correlation and DPSK header parsing remain accurate regardless of the source hardware.
 

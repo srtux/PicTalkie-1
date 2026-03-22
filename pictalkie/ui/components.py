@@ -90,8 +90,11 @@ class MicRecorder:
         self.recording = True
 
         # Use the mic's native sample rate to avoid driver resampling issues
-        device_info = sd.query_devices(kind='input')
-        self._device_rate = int(device_info['default_samplerate'])
+        try:
+            device_info = sd.query_devices(kind='input')
+            self._device_rate = int(device_info['default_samplerate'])
+        except Exception:
+            raise RuntimeError("No audio input device (microphone) found.")
 
         self._stream = sd.InputStream(
             samplerate=self._device_rate,
@@ -125,10 +128,11 @@ class MicRecorder:
         if self._device_rate and self._device_rate != SAMPLE_RATE:
             raw = _resample(raw, self._device_rate, SAMPLE_RATE)
 
-        # Normalize: scale peak amplitude to match encoder's range (~0.7 max)
+        # Normalize peak to ~0.95 to use full dynamic range without clipping.
+        # Calibration correction handles any gain mismatch with the encoder.
         peak = np.max(np.abs(raw))
         if peak > 0.001:
-            raw = raw * (0.7 / peak)
+            raw = raw * (0.95 / peak)
 
         return raw
 
@@ -142,9 +146,19 @@ class MicRecorder:
 
 
 def _resample(samples, from_rate, to_rate):
-    """Resample audio using linear interpolation."""
-    duration = len(samples) / from_rate
-    n_out = int(duration * to_rate)
-    x_old = np.linspace(0, duration, len(samples), endpoint=False)
-    x_new = np.linspace(0, duration, n_out, endpoint=False)
-    return np.interp(x_new, x_old, samples).astype(np.float32)
+    """Resample audio using linear interpolation to avoid boundary glitches.
+
+    Linear interpolation preserves phase alignment and timing across continuous
+    timescales without accumulating block-rounding drift.
+    """
+    if from_rate == to_rate or len(samples) == 0:
+        return samples
+
+    n_in = len(samples)
+    n_out = int(np.round(n_in * to_rate / from_rate))
+
+    t_in = np.arange(n_in) / from_rate
+    t_out = np.arange(n_out) / to_rate
+
+    return np.interp(t_out, t_in, samples).astype(np.float32)
+

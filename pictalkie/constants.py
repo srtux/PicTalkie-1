@@ -13,7 +13,7 @@ TOTAL_VALUES = TOTAL_PIXELS * CHANNELS                     # 196,608
 DATA_SAMPLES = TOTAL_VALUES * SAMPLES_PER_VALUE            # 2,555,904
 
 # --- Protocol sections ---
-# Message: Wakeup | Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
+# Message: VOX Wakeup | Chirp | Gap | DPSK Header | Gap | Calibration | Gap | Pixel Data
 
 VOX_WAKEUP_DURATION = 0.5        # seconds -- steady tone to open VOX gate
 VOX_WAKEUP_FREQ = 1500           # Frequency (Hz)
@@ -28,29 +28,36 @@ CHIRP_SAMPLES = int(SAMPLE_RATE * CHIRP_DURATION)  # 5,292
 GAP_DURATION = 0.05              # 50ms silence between sections
 GAP_SAMPLES = int(SAMPLE_RATE * GAP_DURATION)  # 2,205
 
-FSK_MARK = 2200                  # Frequency for bit '1' (Hz)
-FSK_SPACE = 1200                 # Frequency for bit '0' (Hz)
-FSK_BIT_DURATION = 0.01          # 10ms per bit (100 Baud)
-FSK_BIT_SAMPLES = int(SAMPLE_RATE * FSK_BIT_DURATION)  # 441
+# Chirp detection tuning
+CHIRP_DETECT_THRESHOLD = 0.35    # Minimum normalized correlation (0-1 scale)
+CHIRP_PEAK_SIDELOBE_RATIO = 3.0  # Peak must exceed median correlation by this factor
 
-# Header bits: Width (16), Height (16), Channels (8), Checksum (8) = 48 bits
-HEADER_BITS = 48
-HEADER_SAMPLES = HEADER_BITS * FSK_BIT_SAMPLES  # 21,168
+# DPSK header (Bell 212A-style differential phase shift keying)
+# Phase *changes* encode bits — immune to amplitude variations over-the-air.
+# Repeated 3× with majority voting for robustness (like modem training sequences).
+DPSK_FREQ = 1800                 # Hz carrier (18 full cycles per 10ms symbol → clean phase)
+DPSK_BIT_DURATION = 0.01         # 10ms per symbol (100 Baud)
+DPSK_BIT_SAMPLES = int(SAMPLE_RATE * DPSK_BIT_DURATION)  # 441
+
+# Header bits: Width (16), Height (16), Channels (8), CRC-16 (16) = 56 bits
+HEADER_BITS = 56
+HEADER_REPS = 3                  # majority voting repetitions
+HEADER_SYMBOLS = (1 + HEADER_BITS) * HEADER_REPS  # 147 (ref + 48 data × 3)
+HEADER_SAMPLES = HEADER_SYMBOLS * DPSK_BIT_SAMPLES  # 64,827
 
 CALIBRATION_LEVELS = 256         # one for each possible pixel value (0-255)
-CALIBRATION_DURATION = 2.56      # seconds -- 10ms per level
-CALIBRATION_SPV = int(SAMPLE_RATE * CALIBRATION_DURATION / CALIBRATION_LEVELS)  # 441
+CALIBRATION_REPS = 10            # repeat calibration for noise averaging over air
+CALIBRATION_TOTAL = CALIBRATION_LEVELS * SAMPLES_PER_VALUE * CALIBRATION_REPS  # 33,280
 
-NUM_GAPS = 3
 PROTOCOL_SAMPLES = (
     VOX_WAKEUP_SAMPLES
     + CHIRP_SAMPLES
     + GAP_SAMPLES
     + HEADER_SAMPLES
     + GAP_SAMPLES
-    + CALIBRATION_LEVELS * CALIBRATION_SPV
+    + CALIBRATION_TOTAL
     + GAP_SAMPLES
-)  # 168,021
+)  # 88,405
 
 
 # --- Total message ---
@@ -75,12 +82,17 @@ WINDOW_WIDTH = 900
 WINDOW_HEIGHT = 850
 FPS = 60
 
-# --- UI Layout (shared) ---
+# UI Layout (shared)
 MARGIN = 50                              # Left/right margin for full-width elements
 CONTENT_INSET = 60                       # Inset for waveform/content areas
 BORDER_WIDTH = 3                         # Border around displayed images
 LAYOUT_GAP = 7                           # Vertical gap between layout sections
 BUTTON_GAP = 20                          # Horizontal gap between side-by-side buttons
+
+# Home screen
+HOME_BTN_W = 220
+HOME_BTN_H = 60
+HOME_GAP = 30
 
 # Top bar
 BACK_BTN_X = 10

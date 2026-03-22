@@ -3,7 +3,7 @@
 import pygame
 import pygame_gui
 
-from ..constants import COLOR_BG, WINDOW_WIDTH, WINDOW_HEIGHT
+from ..constants import COLOR_BG, WINDOW_WIDTH, WINDOW_HEIGHT, HOME_BTN_W, HOME_BTN_H, HOME_GAP
 
 
 class HomeScreen:
@@ -12,8 +12,7 @@ class HomeScreen:
     def __init__(self, manager):
         self.manager = manager
         cx = WINDOW_WIDTH // 2
-        btn_w, btn_h, gap = 220, 60, 30
-        start_x = cx - btn_w - gap // 2
+        start_x = cx - HOME_BTN_W - HOME_GAP // 2
         btn_y = WINDOW_HEIGHT // 2 + 20
 
         self.title = pygame_gui.elements.UILabel(
@@ -30,30 +29,24 @@ class HomeScreen:
         )
 
         self.encoder_btn = pygame_gui.elements.UIButton(
-            relative_rect=pygame.Rect(start_x, btn_y, btn_w, btn_h),
+            relative_rect=pygame.Rect(start_x, btn_y, HOME_BTN_W, HOME_BTN_H),
             text="Encoder (TX)",
             manager=manager,
             object_id="#accent_button",
         )
         self.decoder_btn = pygame_gui.elements.UIButton(
-            relative_rect=pygame.Rect(start_x + btn_w + gap, btn_y, btn_w, btn_h),
+            relative_rect=pygame.Rect(start_x + HOME_BTN_W + HOME_GAP, btn_y, HOME_BTN_W, HOME_BTN_H),
             text="Decoder (RX)",
             manager=manager,
             object_id="#accent_button",
         )
-        self.credit = pygame_gui.elements.UILabel(
-            relative_rect=pygame.Rect(0, WINDOW_HEIGHT - 40, WINDOW_WIDTH, 28),
-            text="Pittsburgh Regional Science & Engineering Fair",
-            manager=manager,
-            object_id="#credit_label",
-        )
 
     def show(self):
-        for el in (self.title, self.subtitle, self.encoder_btn, self.decoder_btn, self.credit):
+        for el in (self.title, self.subtitle, self.encoder_btn, self.decoder_btn):
             el.show()
 
     def hide(self):
-        for el in (self.title, self.subtitle, self.encoder_btn, self.decoder_btn, self.credit):
+        for el in (self.title, self.subtitle, self.encoder_btn, self.decoder_btn):
             el.hide()
 
     def handle_event(self, event):
