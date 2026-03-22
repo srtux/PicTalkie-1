@@ -225,10 +225,11 @@ def parse_protocol(samples):
     template = _generate_chirp()
     search_len = min(len(samples), int(SAMPLE_RATE * 10))
     corr = np.correlate(samples[:search_len], template, mode='valid')
+    peak_val = np.max(np.abs(corr))
+    if peak_val < 100.0:  # Threshold for pure noise vs real chirp
+        return None
     start_idx = np.argmax(np.abs(corr))
     
-    # Validation: guarantee peak is substantial? 
-    # Just indexing offset from peak for now
     offset = start_idx + CHIRP_SAMPLES + GAP_SAMPLES
 
     # 2. Demodulate digital AFSK Header
@@ -247,7 +248,8 @@ def parse_protocol(samples):
 
     calc_checksum = (width ^ height ^ channels) & 0xFF
     if checksum != calc_checksum:
-        print(f"Warning: Header checksum failed ({checksum} != {calc_checksum})")
+        print(f"Rejecting frame: Header checksum failed ({checksum} != {calc_checksum})")
+        return None
 
     offset += HEADER_SAMPLES + GAP_SAMPLES
 
