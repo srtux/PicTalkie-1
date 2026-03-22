@@ -32,7 +32,7 @@ PicTalkie transmits images as audio over walkie-talkies. The pipeline is:
 
 ### Audio protocol structure
 
-The WAV message is self-describing: `VOX Wakeup (0.5s, 1500 Hz tone) | Chirp (0.12s, 1000→3000 Hz sweep) | Gap | AFSK Header (0.48s, width/height/channels/checksum) | Gap | Calibration (0.75s, 256 levels × 10 reps, AM-modulated) | Gap | Pixel Data (~58s, AM-modulated)`. The decoder auto-detects the protocol via chirp cross-correlation; if absent, falls back to legacy headerless format.
+The WAV message is self-describing: `VOX Wakeup (0.5s, 1500 Hz tone) | Chirp (0.12s, 1000→3000 Hz sweep) | Gap | DPSK Header (1.47s, width/height/channels/checksum × 3 reps) | Gap | Calibration (0.75s, 256 levels × 10 reps, AM-modulated) | Gap | Pixel Data (~58s, AM-modulated)`. The decoder auto-detects the protocol via chirp cross-correlation; if absent, falls back to legacy headerless format.
 
 ### Key conventions
 

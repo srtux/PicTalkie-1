@@ -7,11 +7,16 @@ Decoding pipeline:
     WAV samples -> parse protocol -> AM demodulate (RMS) -> calibration correction -> pixel values
 
 Protocol message structure:
-    VOX Wakeup | Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
+    VOX Wakeup | Chirp | Gap | DPSK Header | Gap | Calibration | Gap | Pixel Data
 
-The carrier frequency equals SAMPLE_RATE / SAMPLES_PER_VALUE (~3392 Hz), placing
-exactly one sine cycle per sample group. RMS energy of one full sine period is
-phase-independent, making the decode robust to timing misalignment over-the-air.
+Header uses Bell 212A-style Differential PSK: bits are encoded as phase *changes*
+of a 1800 Hz carrier, making detection immune to amplitude variations. The header
+is repeated 3× and majority-voted per bit for robustness.
+
+Pixel data uses AM modulation: the carrier frequency equals SAMPLE_RATE /
+SAMPLES_PER_VALUE (~3392 Hz), placing exactly one sine cycle per sample group.
+RMS energy of one full sine period is phase-independent, making the decode robust
+to timing misalignment over-the-air.
 """
 
 import wave
@@ -24,7 +29,7 @@ from .constants import (
     VOX_WAKEUP_FREQ, VOX_WAKEUP_SAMPLES,
     CHIRP_DURATION, CHIRP_F0, CHIRP_F1, CHIRP_SAMPLES,
     GAP_SAMPLES,
-    FSK_MARK, FSK_SPACE, FSK_BIT_SAMPLES, HEADER_BITS, HEADER_SAMPLES,
+    DPSK_FREQ, DPSK_BIT_SAMPLES, HEADER_BITS, HEADER_REPS, HEADER_SAMPLES,
     CALIBRATION_LEVELS, CALIBRATION_REPS, CALIBRATION_TOTAL,
     PROTOCOL_SAMPLES,
 )
@@ -43,19 +48,6 @@ def _generate_chirp():
     return np.sin(phase).astype(np.float32)
 
 
-def _encode_bits_afsk(bits):
-    """Encode a list of bits (0 or 1) into AFSK audio samples."""
-    samples = []
-    t = np.linspace(0, 1.0 / SAMPLE_RATE * FSK_BIT_SAMPLES, FSK_BIT_SAMPLES, endpoint=False)
-    sine_mark = np.sin(2 * np.pi * FSK_MARK * t).astype(np.float32)
-    sine_space = np.sin(2 * np.pi * FSK_SPACE * t).astype(np.float32)
-
-    for bit in bits:
-        samples.append(sine_mark if bit else sine_space)
-
-    return np.concatenate(samples)
-
-
 def _int_to_bits(val, num_bits):
     """Convert an integer to a list of bits (MSB first)."""
     return [int(b) for b in format(val, f'0{num_bits}b')]
@@ -69,25 +61,81 @@ def _bits_to_int(bits):
     return out
 
 
-def _demodulate_afsk(samples, num_bits):
-    """Demodulate AFSK audio samples into a list of bits."""
-    bits = []
-    t = np.linspace(0, 1.0 / SAMPLE_RATE * FSK_BIT_SAMPLES, FSK_BIT_SAMPLES, endpoint=False)
-    sine_mark = np.sin(2 * np.pi * FSK_MARK * t).astype(np.float32)
-    sine_space = np.sin(2 * np.pi * FSK_SPACE * t).astype(np.float32)
+# ---------------------------------------------------------------------------
+# DPSK modulation (Bell 212A-style)
+# ---------------------------------------------------------------------------
 
-    for i in range(num_bits):
-        start = i * FSK_BIT_SAMPLES
-        end = start + FSK_BIT_SAMPLES
-        if end > len(samples):
-            break
-        chunk = samples[start:end]
+def _encode_dpsk(bits):
+    """Encode bits using Differential Phase Shift Keying with majority voting.
 
-        dot_mark = np.abs(np.dot(chunk, sine_mark))
-        dot_space = np.abs(np.dot(chunk, sine_space))
-        bits.append(1 if dot_mark > dot_space else 0)
+    Each bit is a phase *change* of a 1800 Hz carrier:
+      - bit '1' -> flip phase 180 degrees
+      - bit '0' -> keep phase
 
-    return bits
+    A reference symbol precedes each of HEADER_REPS repetitions.
+    The decoder compares adjacent symbols — only the sign of the dot product
+    matters, making detection completely immune to amplitude variations.
+    """
+    t = np.arange(DPSK_BIT_SAMPLES) / SAMPLE_RATE
+    carrier = np.sin(2 * np.pi * DPSK_FREQ * t).astype(np.float32)
+
+    result = []
+    for _ in range(HEADER_REPS):
+        phase = 1.0
+        result.append(carrier * phase)  # reference symbol
+        for bit in bits:
+            if bit == 1:
+                phase *= -1
+            result.append(carrier * phase)
+
+    return np.concatenate(result)
+
+
+def _demodulate_dpsk(samples, num_bits):
+    """Demodulate DPSK with majority voting across HEADER_REPS repetitions.
+
+    For each bit, compares the dot product of adjacent symbols:
+      - negative dot -> phase flipped -> bit '1'
+      - positive dot -> phase same    -> bit '0'
+
+    With 3 repetitions and majority voting, a bit error requires the same bit
+    to be corrupted in 2 of 3 independent measurements.
+    """
+    symbols_per_rep = 1 + num_bits  # ref + data
+    all_reps = []
+
+    for r in range(HEADER_REPS):
+        rep_offset = r * symbols_per_rep * DPSK_BIT_SAMPLES
+        bits = []
+        for i in range(num_bits):
+            prev_start = rep_offset + i * DPSK_BIT_SAMPLES
+            curr_start = rep_offset + (i + 1) * DPSK_BIT_SAMPLES
+
+            if curr_start + DPSK_BIT_SAMPLES > len(samples):
+                break
+
+            prev = samples[prev_start:prev_start + DPSK_BIT_SAMPLES]
+            curr = samples[curr_start:curr_start + DPSK_BIT_SAMPLES]
+
+            dot = np.dot(prev, curr)
+            bits.append(1 if dot < 0 else 0)
+
+        if len(bits) == num_bits:
+            all_reps.append(bits)
+
+    if not all_reps:
+        return []
+
+    if len(all_reps) == 1:
+        return all_reps[0]
+
+    # Majority voting across repetitions
+    result = []
+    for bit_idx in range(num_bits):
+        votes = sum(rep[bit_idx] for rep in all_reps)
+        result.append(1 if votes > len(all_reps) // 2 else 0)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -139,10 +187,10 @@ def _am_demodulate(signal, spv):
 # ---------------------------------------------------------------------------
 
 def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channels=CHANNELS):
-    """Encode pixel values into a full protocol message with AM carrier.
+    """Encode pixel values into a full protocol message.
 
     Message structure:
-        VOX Wakeup | Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
+        VOX Wakeup | Chirp | Gap | DPSK Header | Gap | Calibration | Gap | Pixel Data
 
     Returns:
         numpy float32 array of the complete audio message.
@@ -159,7 +207,7 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
     parts.append(_generate_chirp())
     parts.append(gap)
 
-    # 2. Digital AFSK Header -- image dimensions
+    # 2. DPSK Header -- image dimensions, repeated 3× with majority voting
     checksum = (width ^ height ^ channels) & 0xFF
     bits = []
     bits.extend(_int_to_bits(width, 16))
@@ -167,7 +215,7 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
     bits.extend(_int_to_bits(channels, 8))
     bits.extend(_int_to_bits(checksum, 8))
 
-    parts.append(_encode_bits_afsk(bits))
+    parts.append(_encode_dpsk(bits))
     parts.append(gap)
 
     # 3. Calibration -- all 256 amplitude levels, AM-modulated, repeated for averaging
@@ -257,7 +305,7 @@ def _decode_24bit(raw_data):
 # ---------------------------------------------------------------------------
 
 def parse_protocol(samples):
-    """Parse protocol sections from audio samples using Chirp sync and AFSK header.
+    """Parse protocol sections from audio samples using Chirp sync and DPSK header.
 
     Returns:
         dict with calibration, width, height, channels, data_offset
@@ -277,11 +325,11 @@ def parse_protocol(samples):
 
     offset = start_idx + CHIRP_SAMPLES + GAP_SAMPLES
 
-    # 2. Demodulate digital AFSK Header
+    # 2. Demodulate DPSK Header (3× repetition with majority voting)
     if offset + HEADER_SAMPLES > len(samples):
         return None
     header_data = samples[offset:offset + HEADER_SAMPLES]
-    bits = _demodulate_afsk(header_data, HEADER_BITS)
+    bits = _demodulate_dpsk(header_data, HEADER_BITS)
 
     if len(bits) < HEADER_BITS:
         return None
@@ -293,7 +341,6 @@ def parse_protocol(samples):
 
     calc_checksum = (width ^ height ^ channels) & 0xFF
     if checksum != calc_checksum:
-        print(f"Rejecting frame: Header checksum failed ({checksum} != {calc_checksum})")
         return None
 
     offset += HEADER_SAMPLES + GAP_SAMPLES
