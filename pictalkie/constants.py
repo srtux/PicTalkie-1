@@ -28,6 +28,10 @@ CHIRP_SAMPLES = int(SAMPLE_RATE * CHIRP_DURATION)  # 5,292
 GAP_DURATION = 0.05              # 50ms silence between sections
 GAP_SAMPLES = int(SAMPLE_RATE * GAP_DURATION)  # 2,205
 
+# Chirp detection tuning
+CHIRP_DETECT_THRESHOLD = 0.35    # Minimum normalized correlation (0-1 scale)
+CHIRP_PEAK_SIDELOBE_RATIO = 3.0  # Peak must exceed median correlation by this factor
+
 # DPSK header (Bell 212A-style differential phase shift keying)
 # Phase *changes* encode bits — immune to amplitude variations over-the-air.
 # Repeated 3× with majority voting for robustness (like modem training sequences).
@@ -35,8 +39,8 @@ DPSK_FREQ = 1800                 # Hz carrier (18 full cycles per 10ms symbol �
 DPSK_BIT_DURATION = 0.01         # 10ms per symbol (100 Baud)
 DPSK_BIT_SAMPLES = int(SAMPLE_RATE * DPSK_BIT_DURATION)  # 441
 
-# Header bits: Width (16), Height (16), Channels (8), Checksum (8) = 48 bits
-HEADER_BITS = 48
+# Header bits: Width (16), Height (16), Channels (8), CRC-16 (16) = 56 bits
+HEADER_BITS = 56
 HEADER_REPS = 3                  # majority voting repetitions
 HEADER_SYMBOLS = (1 + HEADER_BITS) * HEADER_REPS  # 147 (ref + 48 data × 3)
 HEADER_SAMPLES = HEADER_SYMBOLS * DPSK_BIT_SAMPLES  # 64,827

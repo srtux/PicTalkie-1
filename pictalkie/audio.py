@@ -33,6 +33,7 @@ from .constants import (
     DPSK_FREQ, DPSK_BIT_SAMPLES, HEADER_BITS, HEADER_REPS, HEADER_SAMPLES,
     CALIBRATION_LEVELS, CALIBRATION_REPS, CALIBRATION_TOTAL,
     PROTOCOL_SAMPLES,
+    CHIRP_DETECT_THRESHOLD, CHIRP_PEAK_SIDELOBE_RATIO,
 )
 
 from .image import reconstruct_image
@@ -65,6 +66,26 @@ def _bits_to_int(bits):
 def _is_power_of_two(value):
     """Return True when value is a positive power of two."""
     return value > 0 and (value & (value - 1)) == 0
+
+
+def _crc16_ccitt(data_bytes):
+    """Compute CRC-16-CCITT (polynomial 0x1021, init 0xFFFF)."""
+    crc = 0xFFFF
+    for byte in data_bytes:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else (crc << 1)
+            crc &= 0xFFFF
+    return crc
+
+
+def _header_payload_bytes(width, height, channels):
+    """Pack header fields into bytes for CRC computation."""
+    return bytes([
+        (width >> 8) & 0xFF, width & 0xFF,
+        (height >> 8) & 0xFF, height & 0xFF,
+        channels & 0xFF,
+    ])
 
 
 def _is_valid_header(width, height, channels):
@@ -229,12 +250,12 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
     parts.append(gap)
 
     # 2. DPSK Header -- image dimensions, repeated 3× with majority voting
-    checksum = (width ^ height ^ channels) & 0xFF
+    checksum = _crc16_ccitt(_header_payload_bytes(width, height, channels))
     bits = []
     bits.extend(_int_to_bits(width, 16))
     bits.extend(_int_to_bits(height, 16))
     bits.extend(_int_to_bits(channels, 8))
-    bits.extend(_int_to_bits(checksum, 8))
+    bits.extend(_int_to_bits(checksum, 16))
 
     parts.append(_encode_dpsk(bits))
     parts.append(gap)
@@ -272,9 +293,10 @@ def save_wav(samples, filepath):
 
 
 def load_wav(filepath):
-    """Load a WAV file, normalize to float32 (-1 to +1), extract first channel.
+    """Load a WAV file, normalize to float32 (-1 to +1), downmix to mono.
 
-    Supports 8, 16, 24, and 32-bit WAV files.
+    Supports 8, 16, 24, and 32-bit WAV files.  Multi-channel recordings are
+    averaged across channels so that signal on any channel is preserved.
 
     Returns:
         (samples, sample_rate) tuple.
@@ -288,7 +310,9 @@ def load_wav(filepath):
     samples = _normalize_samples(raw_data, sample_width)
 
     if n_channels > 1:
-        samples = samples[::n_channels]
+        n_frames = len(samples) // n_channels
+        samples = samples[:n_frames * n_channels]
+        samples = samples.reshape(n_frames, n_channels).mean(axis=1).astype(np.float32)
 
     return samples, sample_rate
 
@@ -378,8 +402,15 @@ def normalize_decode_samples(samples, sample_rate):
 # Protocol parsing
 # ---------------------------------------------------------------------------
 
-def parse_protocol(samples):
+def parse_protocol(samples, max_search_samples=None):
     """Parse protocol sections from audio samples using Chirp sync and DPSK header.
+
+    Args:
+        samples: float32 audio at SAMPLE_RATE.
+        max_search_samples: how far into *samples* to look for the chirp.
+            Defaults to 10 seconds (suitable for the live streaming decoder).
+            Pass ``len(samples)`` when decoding a complete file so the chirp
+            can be found regardless of leading silence.
 
     Returns:
         dict with calibration, width, height, channels, data_offset
@@ -388,14 +419,34 @@ def parse_protocol(samples):
     if len(samples) < PROTOCOL_SAMPLES:
         return None
 
-    # 1. Sync using Chirp correlation
+    # 1. Sync using normalized chirp correlation
     template = _generate_chirp()
-    search_len = min(len(samples), int(SAMPLE_RATE * 10))
+    if max_search_samples is None:
+        search_len = min(len(samples), int(SAMPLE_RATE * 10))
+    else:
+        search_len = min(len(samples), max_search_samples)
     corr = np.correlate(samples[:search_len], template, mode='valid')
-    peak_val = np.max(np.abs(corr))
-    if peak_val < 100.0:
+
+    # Energy-normalize so the threshold is volume-independent (0-1 scale)
+    template_energy = np.sqrt(np.sum(template ** 2))
+    sq = samples[:search_len].astype(np.float64) ** 2
+    cumsum = np.concatenate([[0.0], np.cumsum(sq)])
+    n_corr = len(corr)
+    tpl_len = len(template)
+    window_energy = np.sqrt(cumsum[tpl_len:tpl_len + n_corr] - cumsum[:n_corr])
+    window_energy = np.maximum(window_energy, 1e-10)
+    norm_corr = np.abs(corr) / (template_energy * window_energy)
+
+    peak_val = np.max(norm_corr)
+    if peak_val < CHIRP_DETECT_THRESHOLD:
         return None
-    start_idx = np.argmax(np.abs(corr))
+
+    # Peak-to-sidelobe check: reject random noise that correlates weakly everywhere
+    median_corr = np.median(norm_corr)
+    if median_corr > 1e-10 and peak_val / median_corr < CHIRP_PEAK_SIDELOBE_RATIO:
+        return None
+
+    start_idx = np.argmax(norm_corr)
 
     offset = start_idx + CHIRP_SAMPLES + GAP_SAMPLES
 
@@ -411,9 +462,9 @@ def parse_protocol(samples):
     width = _bits_to_int(bits[0:16])
     height = _bits_to_int(bits[16:32])
     channels = _bits_to_int(bits[32:40])
-    checksum = _bits_to_int(bits[40:48])
+    checksum = _bits_to_int(bits[40:56])
 
-    calc_checksum = (width ^ height ^ channels) & 0xFF
+    calc_checksum = _crc16_ccitt(_header_payload_bytes(width, height, channels))
     if checksum != calc_checksum:
         return None
     if not _is_valid_header(width, height, channels):
@@ -445,16 +496,79 @@ def parse_protocol(samples):
 # Decoding
 # ---------------------------------------------------------------------------
 
-def decode_from_samples(samples, samples_per_value=SAMPLES_PER_VALUE, calibration=None):
+def _timing_recovery_demodulate(signal, nominal_spv):
+    """AM demodulate with global timing recovery to compensate clock drift.
+
+    Measures the actual carrier frequency via FFT peak detection with
+    parabolic interpolation, then resamples to correct the drift.  Only
+    corrects when drift exceeds ~100 ppm — below that, the standard
+    integer-SPV demodulation is used unchanged, preserving pixel-perfect
+    round-trips for clean signals.
+    """
+    total = len(signal)
+
+    # Short signals can't accumulate meaningful drift
+    if total < nominal_spv * 1000:
+        return _am_demodulate(signal, nominal_spv)
+
+    # Estimate actual carrier frequency using FFT
+    fft_len = min(total, 2 ** 17)  # 131072 samples — ~0.34 Hz resolution
+    spectrum = np.abs(np.fft.rfft(signal[:fft_len]))
+    freqs = np.fft.rfftfreq(fft_len, 1.0 / SAMPLE_RATE)
+
+    expected_freq = SAMPLE_RATE / nominal_spv
+    lo, hi = expected_freq * 0.99, expected_freq * 1.01
+    mask = (freqs >= lo) & (freqs <= hi)
+
+    search = spectrum.copy()
+    search[~mask] = 0
+    peak_bin = int(np.argmax(search))
+
+    # Parabolic interpolation for sub-bin precision
+    if 0 < peak_bin < len(spectrum) - 1:
+        a, b, c = float(spectrum[peak_bin - 1]), float(spectrum[peak_bin]), float(spectrum[peak_bin + 1])
+        denom = a - 2 * b + c
+        delta = 0.5 * (a - c) / denom if abs(denom) > 1e-10 else 0.0
+        peak_freq = freqs[peak_bin] + delta * (freqs[1] - freqs[0])
+    else:
+        peak_freq = expected_freq
+
+    actual_spv = SAMPLE_RATE / peak_freq
+
+    # Only correct when drift exceeds ~100 ppm
+    if abs(actual_spv - nominal_spv) / nominal_spv < 100e-6:
+        return _am_demodulate(signal, nominal_spv)
+
+    # Resample entire signal to correct the drift, then demodulate normally
+    n_values = round(total / actual_spv)
+    target_total = n_values * nominal_spv
+    corrected = np.interp(
+        np.linspace(0, 1, target_total),
+        np.linspace(0, 1, total),
+        signal,
+    ).astype(np.float32)
+
+    return _am_demodulate(corrected, nominal_spv)
+
+
+def decode_from_samples(samples, samples_per_value=SAMPLES_PER_VALUE,
+                        calibration=None, timing_recovery=True):
     """Decode AM-modulated audio samples back into pixel values.
 
     Extracts amplitude envelope via RMS, then maps to pixel values
     using calibration correction or inverse Baird formula.
 
+    Args:
+        timing_recovery: use block-based timing estimation to compensate
+            clock drift.  Set False for incremental streaming decode.
+
     Returns:
         List of ints (0-255).
     """
-    amplitudes = _am_demodulate(samples, samples_per_value)
+    if calibration is not None and timing_recovery:
+        amplitudes = _timing_recovery_demodulate(samples, samples_per_value)
+    else:
+        amplitudes = _am_demodulate(samples, samples_per_value)
 
     if calibration is not None:
         pixel_values = _apply_correction(amplitudes, calibration)
@@ -464,24 +578,39 @@ def decode_from_samples(samples, samples_per_value=SAMPLES_PER_VALUE, calibratio
     return pixel_values.tolist()
 
 
+def _isotonic_regression(y):
+    """Pool Adjacent Violators — enforce monotonically non-decreasing.
+
+    Runs in O(n) and is equivalent to scikit-learn's IsotonicRegression
+    but avoids an external dependency.
+    """
+    n = len(y)
+    result = y.astype(np.float64).copy()
+    # Each block: [running_sum, count, start_index]
+    blocks = []
+    for i in range(n):
+        blocks.append([result[i], 1, i])
+        while len(blocks) > 1 and blocks[-2][0] / blocks[-2][1] > blocks[-1][0] / blocks[-1][1]:
+            curr = blocks.pop()
+            blocks[-1][0] += curr[0]
+            blocks[-1][1] += curr[1]
+    out = np.empty(n, dtype=np.float64)
+    for s, c, start in blocks:
+        out[start:start + c] = s / c
+    return out
+
+
 def _apply_correction(amplitudes, calibration):
     """Map received amplitudes to pixel values using calibration data.
 
     calibration[i] = measured amplitude for pixel value i after transmission.
-    For each received amplitude, finds the nearest calibration level.
+    Enforces monotonicity via isotonic regression, then uses linear
+    interpolation for sub-pixel accuracy (reduces banding artifacts).
     """
-    sorted_idx = np.argsort(calibration)
-    sorted_cal = calibration[sorted_idx]
-
-    insert = np.searchsorted(sorted_cal, amplitudes)
-    insert = np.clip(insert, 0, len(sorted_cal) - 1)
-    left = np.clip(insert - 1, 0, len(sorted_cal) - 1)
-
-    dist_right = np.abs(amplitudes - sorted_cal[insert])
-    dist_left = np.abs(amplitudes - sorted_cal[left])
-
-    best = np.where(dist_left < dist_right, left, insert)
-    return sorted_idx[best].astype(int)
+    mono_cal = _isotonic_regression(np.asarray(calibration, dtype=np.float64))
+    pixel_indices = np.arange(len(mono_cal), dtype=np.float64)
+    interpolated = np.interp(amplitudes, mono_cal, pixel_indices)
+    return np.clip(np.round(interpolated), 0, 255).astype(int)
 
 
 def decode_wav_file(filepath):
@@ -493,7 +622,7 @@ def decode_wav_file(filepath):
     samples, sample_rate = load_wav(filepath)
     decode_samples = normalize_decode_samples(samples, sample_rate)
 
-    protocol = parse_protocol(decode_samples)
+    protocol = parse_protocol(decode_samples, max_search_samples=len(decode_samples))
     if protocol is not None:
         data = decode_samples[protocol['data_offset']:]
         pixel_values = decode_from_samples(data, SAMPLES_PER_VALUE, protocol['calibration'])
