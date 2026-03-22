@@ -1,12 +1,13 @@
 """Encoder screen: select image, preview, encode to audio, play/save."""
 
+import time
 import pygame
 import pygame_gui
 from pygame_gui.windows import UIFileDialog
 from PIL import Image
 
 from ..constants import (
-    COLOR_BG, COLOR_BLACK, COLOR_TEXT_DIM,
+    COLOR_BG, COLOR_BLACK, COLOR_TEXT_DIM, COLOR_ACCENT,
     IMAGE_SIZE, SAMPLE_RATE, SAMPLES_PER_VALUE,
     TOTAL_SAMPLES, TOTAL_VALUES, AUDIO_DURATION,
     WINDOW_WIDTH,
@@ -50,6 +51,7 @@ class EncoderScreen:
         self.encoded_samples = None
         self.encoded = False
         self.playing = False
+        self.playback_start_time = None
         self.file_dialog = None
         self.save_dialog = None
 
@@ -195,6 +197,7 @@ class EncoderScreen:
             try:
                 play_audio(self.encoded_samples, "_temp_pictalkie.wav")
                 self.playing = True
+                self.playback_start_time = time.time()
                 self.play_btn.set_text("Stop")
             except Exception as e:
                 self.status_label.set_text(f"Playback error: {e}")
@@ -237,3 +240,10 @@ class EncoderScreen:
             wave_w = self.w - 2 * CONTENT_INSET
             pygame.draw.rect(surface, COLOR_BLACK, (CONTENT_INSET, WAVE_Y, wave_w, WAVE_H))
             draw_waveform(surface, self.encoded_samples, CONTENT_INSET, WAVE_Y, wave_w, WAVE_H)
+
+            if self.playing:
+                elapsed = time.time() - self.playback_start_time
+                total_dur = len(self.encoded_samples) / SAMPLE_RATE
+                prog = min(elapsed / total_dur, 1.0) if total_dur > 0 else 0
+                px = CONTENT_INSET + int(prog * wave_w)
+                pygame.draw.line(surface, COLOR_ACCENT, (px, WAVE_Y), (px, WAVE_Y + WAVE_H), 2)
