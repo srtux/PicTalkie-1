@@ -1,13 +1,17 @@
-"""Audio encoding, decoding, and WAV I/O.
+"""Audio encoding, decoding, and WAV I/O with AM carrier modulation.
 
 Encoding pipeline:
-    pixel values -> protocol header + Baird amplitude -> WAV samples
+    pixel values -> Baird amplitude -> AM modulate onto carrier -> WAV samples
 
 Decoding pipeline:
-    WAV samples -> parse protocol -> calibration correction -> pixel values
+    WAV samples -> parse protocol -> AM demodulate (RMS) -> calibration correction -> pixel values
 
 Protocol message structure:
     VOX Wakeup | Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
+
+The carrier frequency equals SAMPLE_RATE / SAMPLES_PER_VALUE (~3392 Hz), placing
+exactly one sine cycle per sample group. RMS energy of one full sine period is
+phase-independent, making the decode robust to timing misalignment over-the-air.
 """
 
 import wave
@@ -21,7 +25,7 @@ from .constants import (
     CHIRP_DURATION, CHIRP_F0, CHIRP_F1, CHIRP_SAMPLES,
     GAP_SAMPLES,
     FSK_MARK, FSK_SPACE, FSK_BIT_SAMPLES, HEADER_BITS, HEADER_SAMPLES,
-    CALIBRATION_LEVELS, CALIBRATION_SPV,
+    CALIBRATION_LEVELS, CALIBRATION_REPS, CALIBRATION_TOTAL,
     PROTOCOL_SAMPLES,
 )
 
@@ -29,14 +33,12 @@ from .image import reconstruct_image
 
 
 # ---------------------------------------------------------------------------
-# Digital helpers for modem especification
+# Digital helpers for modem specification
 # ---------------------------------------------------------------------------
 
 def _generate_chirp():
     """Generate a linear frequency sweep (Chirp) for synchronization."""
     t = np.linspace(0, CHIRP_DURATION, CHIRP_SAMPLES, endpoint=False)
-    # freq(t) = f0 + (f1 - f0) * t / T
-    # phase(t) = 2 * pi * int(freq(t) dt) = 2 * pi * (f0*t + (f1-f0)/2/T * t^2)
     phase = 2 * np.pi * (CHIRP_F0 * t + (CHIRP_F1 - CHIRP_F0) * t**2 / (2 * CHIRP_DURATION))
     return np.sin(phase).astype(np.float32)
 
@@ -80,7 +82,7 @@ def _demodulate_afsk(samples, num_bits):
         if end > len(samples):
             break
         chunk = samples[start:end]
-        
+
         dot_mark = np.abs(np.dot(chunk, sine_mark))
         dot_space = np.abs(np.dot(chunk, sine_space))
         bits.append(1 if dot_mark > dot_space else 0)
@@ -88,6 +90,48 @@ def _demodulate_afsk(samples, num_bits):
     return bits
 
 
+# ---------------------------------------------------------------------------
+# AM carrier modulation (Baird encoding)
+# ---------------------------------------------------------------------------
+
+def _baird_amplitude(values):
+    """Map pixel values (0-255) to AM carrier amplitudes in [0.1, 1.0].
+
+    The 0.1 floor ensures even black pixels produce a measurable signal,
+    distinguishable from silence/noise during over-the-air transmission.
+    """
+    v = np.asarray(values, dtype=np.float32)
+    return 0.1 + (v / 255.0) * 0.9
+
+
+def _inverse_baird(amplitudes):
+    """Map AM carrier amplitudes back to pixel values (0-255)."""
+    return np.clip(np.round((amplitudes - 0.1) / 0.9 * 255), 0, 255).astype(int)
+
+
+def _am_modulate(baseband):
+    """AM-modulate a baseband signal onto the carrier.
+
+    Carrier frequency = SAMPLE_RATE / SAMPLES_PER_VALUE (~3392 Hz),
+    giving exactly one sine cycle per sample group.
+    """
+    t = np.arange(len(baseband))
+    carrier = np.sin(2 * np.pi * t / SAMPLES_PER_VALUE)
+    return (baseband * carrier).astype(np.float32)
+
+
+def _am_demodulate(signal, spv):
+    """Demodulate AM signal by computing RMS energy of each sample group.
+
+    Returns the envelope amplitude (peak, not RMS) for each group.
+    With exactly one carrier cycle per group, RMS = peak / sqrt(2),
+    so peak = RMS * sqrt(2). This is phase-independent.
+    """
+    n = len(signal) // spv
+    trimmed = signal[:n * spv]
+    chunks = trimmed.reshape(n, spv)
+    rms = np.sqrt((chunks ** 2).mean(axis=1))
+    return rms * np.sqrt(2)
 
 
 # ---------------------------------------------------------------------------
@@ -95,10 +139,10 @@ def _demodulate_afsk(samples, num_bits):
 # ---------------------------------------------------------------------------
 
 def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channels=CHANNELS):
-    """Encode pixel values into a full protocol message.
+    """Encode pixel values into a full protocol message with AM carrier.
 
     Message structure:
-        Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
+        VOX Wakeup | Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
 
     Returns:
         numpy float32 array of the complete audio message.
@@ -112,12 +156,10 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
     parts.append(wakeup_tone)
 
     # 1. Sync Chirp -- frequency sweep for start detection
-
     parts.append(_generate_chirp())
     parts.append(gap)
 
-    # 2. digital AFSK Header -- image dimensions
-    # Bits: Width (16), Height (16), Channels (8), Checksum (8)
+    # 2. Digital AFSK Header -- image dimensions
     checksum = (width ^ height ^ channels) & 0xFF
     bits = []
     bits.extend(_int_to_bits(width, 16))
@@ -128,16 +170,19 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
     parts.append(_encode_bits_afsk(bits))
     parts.append(gap)
 
-    # 3. Calibration -- all 256 amplitude levels in order
+    # 3. Calibration -- all 256 amplitude levels, AM-modulated, repeated for averaging
     cal_values = np.arange(CALIBRATION_LEVELS, dtype=np.float32)
-    cal_amps = np.clip((cal_values - 127) / 255 + 0.2, -1.0, 1.0)
-    parts.append(np.repeat(cal_amps, CALIBRATION_SPV))
+    cal_amps = _baird_amplitude(cal_values)
+    one_rep_baseband = np.repeat(cal_amps, SAMPLES_PER_VALUE)
+    one_rep_modulated = _am_modulate(one_rep_baseband)
+    parts.append(np.tile(one_rep_modulated, CALIBRATION_REPS))
     parts.append(gap)
 
-    # 4. Pixel data -- Baird-encoded values with repetition for noise resilience
+    # 4. Pixel data -- Baird amplitudes AM-modulated onto carrier
     values = np.asarray(pixel_values, dtype=np.float32)
-    amplitudes = np.clip((values - 127) / 255 + 0.2, -1.0, 1.0)
-    parts.append(np.repeat(amplitudes, SAMPLES_PER_VALUE))
+    amplitudes = _baird_amplitude(values)
+    baseband = np.repeat(amplitudes, SAMPLES_PER_VALUE)
+    parts.append(_am_modulate(baseband))
 
     return np.concatenate(parts)
 
@@ -226,10 +271,10 @@ def parse_protocol(samples):
     search_len = min(len(samples), int(SAMPLE_RATE * 10))
     corr = np.correlate(samples[:search_len], template, mode='valid')
     peak_val = np.max(np.abs(corr))
-    if peak_val < 100.0:  # Threshold for pure noise vs real chirp
+    if peak_val < 100.0:
         return None
     start_idx = np.argmax(np.abs(corr))
-    
+
     offset = start_idx + CHIRP_SAMPLES + GAP_SAMPLES
 
     # 2. Demodulate digital AFSK Header
@@ -253,13 +298,15 @@ def parse_protocol(samples):
 
     offset += HEADER_SAMPLES + GAP_SAMPLES
 
-    # 3. Read calibration
-    cal_total = CALIBRATION_LEVELS * CALIBRATION_SPV
-    if offset + cal_total > len(samples):
+    # 3. Read calibration (AM-modulated, repeated CALIBRATION_REPS times)
+    if offset + CALIBRATION_TOTAL > len(samples):
         return None
-    cal_data = samples[offset:offset + cal_total]
-    calibration = cal_data.reshape(CALIBRATION_LEVELS, CALIBRATION_SPV).mean(axis=1)
-    offset += cal_total + GAP_SAMPLES
+    cal_data = samples[offset:offset + CALIBRATION_TOTAL]
+    rep_len = CALIBRATION_LEVELS * SAMPLES_PER_VALUE
+    cal_reps = cal_data.reshape(CALIBRATION_REPS, rep_len)
+    cal_demod = np.array([_am_demodulate(rep, SAMPLES_PER_VALUE) for rep in cal_reps])
+    calibration = cal_demod.mean(axis=0)
+    offset += CALIBRATION_TOTAL + GAP_SAMPLES
 
     return {
         'calibration': calibration,
@@ -276,23 +323,20 @@ def parse_protocol(samples):
 # ---------------------------------------------------------------------------
 
 def decode_from_samples(samples, samples_per_value=SAMPLES_PER_VALUE, calibration=None):
-    """Decode audio samples back into pixel values.
+    """Decode AM-modulated audio samples back into pixel values.
 
-    If calibration is provided, uses nearest-neighbor lookup against the
-    calibration amplitudes. Otherwise falls back to inverse Baird formula.
+    Extracts amplitude envelope via RMS, then maps to pixel values
+    using calibration correction or inverse Baird formula.
 
     Returns:
         List of ints (0-255).
     """
-    n_values = len(samples) // samples_per_value
-    trimmed = samples[:n_values * samples_per_value]
-    chunks = trimmed.reshape(n_values, samples_per_value)
-    amplitudes = chunks.mean(axis=1)
+    amplitudes = _am_demodulate(samples, samples_per_value)
 
     if calibration is not None:
         pixel_values = _apply_correction(amplitudes, calibration)
     else:
-        pixel_values = np.clip(np.round((amplitudes - 0.2) * 255 + 127), 0, 255).astype(int)
+        pixel_values = _inverse_baird(amplitudes)
 
     return pixel_values.tolist()
 

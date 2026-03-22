@@ -310,8 +310,15 @@ class DecoderScreen:
             self.progress_label.set_text(f"Recording: {elapsed:.1f}s  (expected: ~{expected:.0f}s)")
 
             if self.mic._chunks:
-                current_samples = np.concatenate(self.mic._chunks)
-                
+                raw = np.concatenate(self.mic._chunks)
+                # Resample to protocol sample rate if mic uses a different rate
+                device_rate = self.mic._device_rate or SAMPLE_RATE
+                if device_rate != SAMPLE_RATE:
+                    from .components import _resample
+                    current_samples = _resample(raw, device_rate, SAMPLE_RATE)
+                else:
+                    current_samples = raw
+
                 if not self.stream_synced:
                     protocol = parse_protocol(current_samples)
                     if protocol:

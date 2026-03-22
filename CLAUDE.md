@@ -16,9 +16,9 @@ uv run pytest tests/test_round_trip.py -v  # Run single test
 
 PicTalkie transmits images as audio over walkie-talkies. The pipeline is:
 
-**Encode:** Image → pad to square → resize to 256x256 → extract RGB in Hilbert curve order → Baird amplitude formula → repeat each value 13x → wrap in protocol (preamble, calibration, sync, header, gaps) → 16-bit PCM WAV
+**Encode:** Image → pad to square → resize to 256x256 → extract RGB in Hilbert curve order → Baird amplitude → AM-modulate onto ~3392 Hz carrier → wrap in protocol (preamble, calibration, sync, header, gaps) → 16-bit PCM WAV
 
-**Decode:** WAV → parse protocol → build calibration correction table → average each 13-sample group → map amplitudes to pixel values → place on 2D grid via inverse Hilbert curve → RGB image
+**Decode:** WAV → parse protocol → AM-demodulate calibration (RMS over 10 reps) → AM-demodulate pixel data (RMS per 13-sample group) → calibration correction → place on 2D grid via inverse Hilbert curve → RGB image
 
 ### Module roles
 
@@ -32,11 +32,12 @@ PicTalkie transmits images as audio over walkie-talkies. The pipeline is:
 
 ### Audio protocol structure
 
-The WAV message is self-describing: `VOX Wakeup (0.5s, 1500 Hz tone) | Chirp (0.12s, 1000→3000 Hz sweep) | Gap | AFSK Header (0.48s, width/height/channels/checksum) | Gap | Calibration (2.56s, 256 levels) | Gap | Pixel Data (~58s)`. The decoder auto-detects the protocol via chirp cross-correlation; if absent, falls back to legacy headerless format.
+The WAV message is self-describing: `VOX Wakeup (0.5s, 1500 Hz tone) | Chirp (0.12s, 1000→3000 Hz sweep) | Gap | AFSK Header (0.48s, width/height/channels/checksum) | Gap | Calibration (0.75s, 256 levels × 10 reps, AM-modulated) | Gap | Pixel Data (~58s, AM-modulated)`. The decoder auto-detects the protocol via chirp cross-correlation; if absent, falls back to legacy headerless format.
 
 ### Key conventions
 
 - Screen-specific layout constants live at the top of each UI file; shared layout constants live in `constants.py`
 - Audio data flows as numpy float32 arrays (`*_samples`); pixel data flows as Python int lists (`*_values`, 0-255)
 - The Hilbert curve requires power-of-2 image dimensions; images are always padded (never cropped) to preserve emergency detail
+- All pixel and calibration data is AM-modulated onto a ~3392 Hz carrier (one cycle per 13-sample group). RMS demodulation is phase-independent, making over-the-air transmission robust
 - The calibration section lets the decoder correct for radio channel distortion by measuring what each amplitude level actually sounds like after transmission
