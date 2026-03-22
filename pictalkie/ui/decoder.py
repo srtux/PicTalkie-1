@@ -260,6 +260,8 @@ class DecoderScreen:
         self.total_values = TOTAL_VALUES
         self.data_offset = 0
         self.calibration = None
+        self.stream_synced = False
+        self.protocol_info = None
 
     # --- Decoding ---
 
@@ -306,6 +308,59 @@ class DecoderScreen:
             elapsed = self.mic.elapsed_seconds
             expected = AUDIO_DURATION
             self.progress_label.set_text(f"Recording: {elapsed:.1f}s  (expected: ~{expected:.0f}s)")
+
+            if self.mic._chunks:
+                current_samples = np.concatenate(self.mic._chunks)
+                
+                if not self.stream_synced:
+                    protocol = parse_protocol(current_samples)
+                    if protocol:
+                        self.stream_synced = True
+                        self.protocol_info = protocol
+                        self.image_width = protocol['width']
+                        self.image_height = protocol['height']
+                        self.image_channels = protocol['channels']
+                        self.total_pixels = self.image_width * self.image_height
+                        
+                        self.hilbert_order = get_hilbert_order(self.image_width)
+                        self.live_surface = pygame.Surface((self.image_width, self.image_height))
+                        self.live_surface.fill((0, 0, 0))
+                        self.pixels_decoded = 0
+                        self.status_label.set_text("Synced! Decoding live...")
+
+                if self.stream_synced:
+                    data = current_samples[self.protocol_info['data_offset']:]
+                    self.all_pixel_values = decode_from_samples(data, SAMPLES_PER_VALUE, self.protocol_info['calibration'])
+                    
+                    target_pixels = min(len(self.all_pixel_values) // self.image_channels, self.total_pixels)
+                    
+                    if target_pixels > self.pixels_decoded:
+                        for p in range(self.pixels_decoded, target_pixels):
+                            if p < len(self.hilbert_order):
+                                hx, hy = self.hilbert_order[p]
+                                base = p * self.image_channels
+                                if base + 2 < len(self.all_pixel_values):
+                                    self.live_surface.set_at((hx, hy), (
+                                        self.all_pixel_values[base],
+                                        self.all_pixel_values[base + 1],
+                                        self.all_pixel_values[base + 2],
+                                    ))
+                        self.pixels_decoded = target_pixels
+                        self.live_display = pygame.transform.scale(self.live_surface, (DISPLAY_SIZE, DISPLAY_SIZE))
+                        pct = (self.pixels_decoded / self.total_pixels) * 100
+                        self.progress_label.set_text(f"Decoded: {self.pixels_decoded:,} / {self.total_pixels:,} pixels ({pct:.0f}%)")
+
+                    if self.pixels_decoded >= self.total_pixels:
+                        self.mic.stop()
+                        self.mic_recording = False
+                        self.record_btn.set_text("Record from Mic")
+                        
+                        self.decoded = True
+                        self.decoding = False
+                        self.decoded_image = reconstruct_image(self.all_pixel_values, self.image_width, self.image_channels)
+                        self.decoded_surface = self.live_display
+                        self.save_btn.show()
+                        self.progress_label.set_text(f"Decoded: {self.image_width}x{self.image_height} complete!")
             return
 
         if not (self.decoding and self.all_pixel_values is not None):

@@ -31,3 +31,6 @@ Icon
 .idea/
 *.swp
 *.swo
+
+# Scratch directory
+scratch/
