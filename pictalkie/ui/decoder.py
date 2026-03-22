@@ -341,10 +341,7 @@ class DecoderScreen:
                 if current_samples is None:
                     return
 
-<<<<<<< HEAD
 
-=======
->>>>>>> origin/main
                 if not self.stream_synced:
                     protocol = parse_protocol(current_samples)
                     if protocol:
