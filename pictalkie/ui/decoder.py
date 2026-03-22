@@ -361,13 +361,15 @@ class DecoderScreen:
                         new_vals = decode_from_samples(
                             data[skip_samples:], SAMPLES_PER_VALUE,
                             self.protocol_info['calibration'],
-                            timing_recovery=False,
                         )
                         if self.all_pixel_values is None:
                             self.all_pixel_values = new_vals
                         else:
                             self.all_pixel_values.extend(new_vals)
-                    
+
+                    if self.all_pixel_values is None:
+                        return
+
                     target_pixels = min(len(self.all_pixel_values) // self.image_channels, self.total_pixels)
                     
                     if target_pixels > self.pixels_decoded:

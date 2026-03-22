@@ -500,10 +500,10 @@ def _timing_recovery_demodulate(signal, nominal_spv):
     """AM demodulate with global timing recovery to compensate clock drift.
 
     Measures the actual carrier frequency via FFT peak detection with
-    parabolic interpolation, then resamples to correct the drift.  Only
-    corrects when drift exceeds ~100 ppm — below that, the standard
-    integer-SPV demodulation is used unchanged, preserving pixel-perfect
-    round-trips for clean signals.
+    parabolic interpolation, then demodulates using fractional-stride
+    positioning.  Only corrects when drift exceeds ~100 ppm — below that,
+    the standard integer-SPV demodulation is used unchanged, preserving
+    pixel-perfect round-trips for clean signals.
     """
     total = len(signal)
 
@@ -511,10 +511,9 @@ def _timing_recovery_demodulate(signal, nominal_spv):
     if total < nominal_spv * 1000:
         return _am_demodulate(signal, nominal_spv)
 
-    # Estimate actual carrier frequency using FFT
-    fft_len = min(total, 2 ** 17)  # 131072 samples — ~0.34 Hz resolution
-    spectrum = np.abs(np.fft.rfft(signal[:fft_len]))
-    freqs = np.fft.rfftfreq(fft_len, 1.0 / SAMPLE_RATE)
+    # Estimate actual carrier frequency using FFT over full signal
+    spectrum = np.abs(np.fft.rfft(signal))
+    freqs = np.fft.rfftfreq(total, 1.0 / SAMPLE_RATE)
 
     expected_freq = SAMPLE_RATE / nominal_spv
     lo, hi = expected_freq * 0.99, expected_freq * 1.01
@@ -539,16 +538,15 @@ def _timing_recovery_demodulate(signal, nominal_spv):
     if abs(actual_spv - nominal_spv) / nominal_spv < 100e-6:
         return _am_demodulate(signal, nominal_spv)
 
-    # Resample entire signal to correct the drift, then demodulate normally
-    n_values = round(total / actual_spv)
-    target_total = n_values * nominal_spv
-    corrected = np.interp(
-        np.linspace(0, 1, target_total),
-        np.linspace(0, 1, total),
-        signal,
-    ).astype(np.float32)
-
-    return _am_demodulate(corrected, nominal_spv)
+    # Demodulate using fractional stride to avoid resampling artifacts
+    n_values = int(total / actual_spv)
+    starts = (np.arange(n_values) * actual_spv).astype(int)
+    offsets = np.arange(nominal_spv)
+    indices = starts[:, np.newaxis] + offsets[np.newaxis, :]
+    indices = np.clip(indices, 0, total - 1)
+    chunks = signal[indices]
+    rms = np.sqrt((chunks ** 2).mean(axis=1))
+    return rms * np.sqrt(2)
 
 
 def decode_from_samples(samples, samples_per_value=SAMPLES_PER_VALUE,
