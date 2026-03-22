@@ -40,3 +40,4 @@ The WAV message is self-describing: `VOX Wakeup (0.5s, 1500 Hz tone) | Chirp (0.
 - Audio data flows as numpy float32 arrays (`*_samples`); pixel data flows as Python int lists (`*_values`, 0-255)
 - The Hilbert curve requires power-of-2 image dimensions; images are always padded (never cropped) to preserve emergency detail
 - The calibration section lets the decoder correct for radio channel distortion by measuring what each amplitude level actually sounds like after transmission
+- **Sample Rate Resilience**: While the protocol is tuned for 44.1 kHz, the decoder automatically resamples 48 kHz (and other) recordings back to 44.1 kHz before processing to support a wider range of recording hardware.

@@ -8,15 +8,18 @@ Simulates:
 """
 
 import os
+import wave
 
 import numpy as np
 from PIL import Image
 
 from pictalkie import constants
 from pictalkie.audio import (
+    decode_wav_file,
     encode_to_samples,
     decode_from_samples,
     parse_protocol,
+    resample_samples,
 )
 from pictalkie.image import load_and_process_image, extract_pixels_hilbert
 
@@ -46,6 +49,16 @@ def _simulate_channel(samples, attenuation=0.5, noise_level=0.0, lead_silence=1.
         channel_noise = np.random.normal(0, noise_level, len(attenuated)).astype(np.float32)
         attenuated = attenuated + channel_noise
     return attenuated
+
+
+def _save_pcm_wav(samples, sample_rate, filepath):
+    """Write mono float samples as a 16-bit PCM WAV with an explicit rate."""
+    with wave.open(str(filepath), "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
+        wf.writeframes(pcm.tobytes())
 
 
 def test_modem_robustness():
@@ -123,6 +136,30 @@ def test_attenuation_levels():
         assert np.array_equal(orig, dec), (
             f"At {attenuation:.0%} volume: {np.sum(orig != dec)} values differ"
         )
+
+
+def test_parse_protocol_rejects_wrong_rate_false_positive():
+    """Wrong-rate recordings should not parse into a bogus header."""
+    samples, _ = _encode_test_image()
+    recorded = resample_samples(samples, constants.SAMPLE_RATE, 48000)
+    assert parse_protocol(recorded) is None
+
+
+def test_decode_wav_file_resamples_48khz_recording(tmp_path):
+    """48 kHz recordings are normalized before protocol parsing and decode cleanly."""
+    color = (12, 120, 240)
+    samples, _ = _encode_test_image(color=color)
+    recorded = resample_samples(samples, constants.SAMPLE_RATE, 48000)
+
+    wav_path = tmp_path / "recorded_48k.wav"
+    _save_pcm_wav(recorded, 48000, wav_path)
+
+    decoded = decode_wav_file(str(wav_path))
+    expected = np.array(Image.new("RGB", (256, 256), color))
+    actual = np.array(decoded)
+    assert np.array_equal(expected, actual), (
+        f"48 kHz decode mismatch: {np.sum(expected != actual)} values differ"
+    )
 
 
 if __name__ == "__main__":

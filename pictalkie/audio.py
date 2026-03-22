@@ -20,6 +20,7 @@ to timing misalignment over-the-air.
 """
 
 import wave
+from math import gcd
 
 import numpy as np
 
@@ -59,6 +60,26 @@ def _bits_to_int(bits):
     for bit in bits:
         out = (out << 1) | bit
     return out
+
+
+def _is_power_of_two(value):
+    """Return True when value is a positive power of two."""
+    return value > 0 and (value & (value - 1)) == 0
+
+
+def _is_valid_header(width, height, channels):
+    """Reject implausible headers instead of accepting checksum collisions.
+
+    PicTalkie currently transmits square Hilbert-mapped RGB images, so
+    headers must describe a square power-of-two raster with a sane channel
+    count. This filters out false positives when a recording is at the wrong
+    sample rate and the DPSK symbols are misread.
+    """
+    if channels not in (1, 3, 4):
+        return False
+    if width != height:
+        return False
+    return _is_power_of_two(width)
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +321,59 @@ def _decode_24bit(raw_data):
     return samples
 
 
+def resample_samples(samples, from_rate, to_rate=SAMPLE_RATE):
+    """Resample audio while preserving carrier amplitudes.
+
+    The decode pipeline is tuned for SAMPLE_RATE timing. Many microphones and
+    recorders save at 48 kHz, so we resample back to the native protocol rate
+    before chirp/header parsing.
+    """
+    samples = np.asarray(samples, dtype=np.float32)
+    if from_rate == to_rate or len(samples) == 0:
+        return samples
+
+    common = gcd(int(from_rate), int(to_rate))
+    up = int(to_rate) // common
+    down = int(from_rate) // common
+
+    n_in = len(samples)
+    block = min(n_in, int(from_rate) * 10)  # process at most 10 seconds at a time
+    result_parts = []
+    pos = 0
+    while pos < n_in:
+        end = min(pos + block, n_in)
+        chunk = samples[pos:end]
+        chunk_len = len(chunk)
+        target_len = int(np.round(chunk_len * up / down))
+        if target_len == 0:
+            break
+
+        spectrum = np.fft.rfft(chunk)
+        target_spectrum_len = target_len // 2 + 1
+
+        if target_spectrum_len <= len(spectrum):
+            resampled_spectrum = spectrum[:target_spectrum_len]
+        else:
+            resampled_spectrum = np.zeros(target_spectrum_len, dtype=spectrum.dtype)
+            resampled_spectrum[:len(spectrum)] = spectrum
+
+        resampled = np.fft.irfft(resampled_spectrum, n=target_len)
+        resampled *= target_len / chunk_len
+        result_parts.append(resampled)
+        pos = end
+
+    if not result_parts:
+        return np.array([], dtype=np.float32)
+    return np.concatenate(result_parts).astype(np.float32)
+
+
+def normalize_decode_samples(samples, sample_rate):
+    """Convert recorded audio to the protocol's native sample rate."""
+    if sample_rate <= 0:
+        raise ValueError(f"Invalid sample rate: {sample_rate}")
+    return resample_samples(samples, sample_rate, SAMPLE_RATE)
+
+
 # ---------------------------------------------------------------------------
 # Protocol parsing
 # ---------------------------------------------------------------------------
@@ -341,6 +415,8 @@ def parse_protocol(samples):
 
     calc_checksum = (width ^ height ^ channels) & 0xFF
     if checksum != calc_checksum:
+        return None
+    if not _is_valid_header(width, height, channels):
         return None
 
     offset += HEADER_SAMPLES + GAP_SAMPLES
@@ -412,18 +488,20 @@ def decode_wav_file(filepath):
     """Full pipeline: WAV file -> reconstructed PIL Image.
 
     Auto-detects protocol header. Falls back to legacy format.
+    Resamples recorded WAVs to the protocol's native rate when needed.
     """
     samples, sample_rate = load_wav(filepath)
+    decode_samples = normalize_decode_samples(samples, sample_rate)
 
-    protocol = parse_protocol(samples)
+    protocol = parse_protocol(decode_samples)
     if protocol is not None:
-        data = samples[protocol['data_offset']:]
+        data = decode_samples[protocol['data_offset']:]
         pixel_values = decode_from_samples(data, SAMPLES_PER_VALUE, protocol['calibration'])
         return reconstruct_image(pixel_values, protocol['width'], protocol['channels'])
 
     # Legacy format (no protocol)
-    spv = _detect_samples_per_value(samples)
-    pixel_values = decode_from_samples(samples, spv)
+    spv = _detect_samples_per_value(decode_samples)
+    pixel_values = decode_from_samples(decode_samples, spv)
     return reconstruct_image(pixel_values)
 
 

@@ -61,6 +61,7 @@ reconstructed.save("photo_decoded.png")
 | Sync type       | Linear Chirp Frequency sweep |
 | Header depth    | AFSK Digital Mode      |
 | Frame mapping   | Analog Baird Formula   |
+| Sample Rate     | 44.1 kHz (Native / 48 kHz Resampling) |
 
 ---
 

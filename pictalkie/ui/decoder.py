@@ -18,7 +18,12 @@ from ..constants import (
     BUTTON_ROW_Y, BUTTON_H, BUTTON_H_SM, LABEL_H,
     DIALOG_X, DIALOG_Y, DIALOG_W, DIALOG_H,
 )
-from ..audio import load_wav, decode_from_samples, parse_protocol
+from ..audio import (
+    load_wav,
+    decode_from_samples,
+    normalize_decode_samples,
+    parse_protocol,
+)
 from ..hilbert import get_hilbert_order
 from ..image import reconstruct_image
 from .components import (
@@ -232,14 +237,14 @@ class DecoderScreen:
 
     def _load_samples(self, samples, sample_rate, source=""):
         """Common path for loading audio from WAV or microphone."""
-        self.wav_samples = samples
-        self.wav_sample_rate = sample_rate
+        self.wav_samples = normalize_decode_samples(samples, sample_rate)
+        self.wav_sample_rate = SAMPLE_RATE
         self._reset_decode_state()
 
         duration = len(samples) / (sample_rate or SAMPLE_RATE)
         self.status_label.set_text(f"Loaded: {source}  |  {duration:.2f}s")
         self.waveform_surface = render_waveform_surface(
-            samples, self.w - 2 * CONTENT_INSET, WAVE_H,
+            self.wav_samples, self.w - 2 * CONTENT_INSET, WAVE_H,
         )
         self.decode_btn.show()
         self.save_btn.hide()

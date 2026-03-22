@@ -100,7 +100,7 @@ sequenceDiagram
 
 | Parameter | Relative Duration | Absolute Samples | Technical Spec |
 | :--- | :--- | :--- | :--- |
-| **Sample Rate** | - | $44,100 \text{ Hz}$ | 16-bit PCM Mono |
+| **Sample Rate** | - | $44,100 \text{ Hz}$ | Native 16-bit PCM Mono (encoded) |
 | **VOX Wakeup** | $0.5\text{s}$ | $22,050$ | $1,500\text{ Hz}$ Continuous |
 | **Sync Chirp** | $0.12\text{s}$ | $5,292$ | $1,000 \rightarrow 3,000\text{ Hz}$ Sweep |
 | **Gap Silence** | $0.05\text{s}$ | $2,205$ | $0.0$ Amplitude buffer |
@@ -108,4 +108,12 @@ sequenceDiagram
 | **Calibration** | $2.56\text{s}$ | $112,896$ | $256$ Multi-level analog steps |
 | **Pixel Data** | $\sim 57.96\text{s}$ | $2,555,904$ | Baird-encoded analog repetition code |
 | **Total Duration** | $\mathbf{61.72\text{s}}$ | $\mathbf{2,723,925}$ | |
+
+---
+
+## 🛠️ Sample Rate Resilience
+
+While the PicTalkie protocol is fundamentally tuned for a **44.1 kHz** sample rate (matching standard CD quality), many modern mobile phones and microphones record at **48 kHz**.
+
+To ensure compatibility across all devices, the decoder performs a high-quality **FFT-based resampling** of any 48 kHz (or other rate) WAV files back to 44.1 kHz before beginning the synchronization and decoding steps. This ensures that the time-sensitive chirp correlation and DPSK header parsing remain accurate regardless of the source hardware.
 

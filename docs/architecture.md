@@ -32,6 +32,9 @@ We increased the transmission resolution from 128x128 to **256x256** to balance 
 ### 3. Samples Per Value (13x)
 To overcome the high signal-to-noise ratio (SNR) challenges of cheap hand-held radios, each pixel value is repeated **13 times**. 
 - **The Why**: Radio transmission introduces "spikes" and "dropouts". The decoder averages the 13 samples per value to cancel out random noise, acting as a robust **analog smoothing filter**.
++
++### 4. Sample Rate Normalization (48 kHz Support)
++To support modern mobile recordings (often 48 kHz), the decoder performs high-quality **FFT-based resampling** back to the native **44.1 kHz** protocol rate before any processing. This ensures that the time-sensitive chirp correlation and DPSK header parsing remain accurate regardless of the source hardware's native sample rate.
 
 ---
 
