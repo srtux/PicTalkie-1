@@ -7,7 +7,7 @@ Decoding pipeline:
     WAV samples -> parse protocol -> calibration correction -> pixel values
 
 Protocol message structure:
-    Preamble | Gap | Calibration | Gap | Header | Gap | Pixel Data
+    VOX Wakeup | Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
 """
 
 import wave

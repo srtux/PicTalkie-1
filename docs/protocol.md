@@ -44,7 +44,7 @@ Because radios can be noisy and cut out, PicTalkie wraps the image in a special 
 
 ---
 
-**Total Song Length**: Under 1 Minute of Airtime!
+**Total Song Length**: About 1 Minute of Airtime!
 By packing reliable digital guides at the front, the analog tail can survive almost anything!
 
 ---
@@ -107,5 +107,5 @@ sequenceDiagram
 | **AFSK Header** | $0.48\text{s}$ | $21,168$ | Mark: $2200\text{Hz}$ \| Space: $1200\text{Hz}$ (48-bits) |
 | **Calibration** | $2.56\text{s}$ | $112,896$ | $256$ Multi-level analog steps |
 | **Pixel Data** | $\sim 57.96\text{s}$ | $2,555,904$ | Baird-encoded analog repetition code |
-| **Total Duration** | $\mathbf{61.67\text{s}}$ | $\mathbf{2,722,332}$ | |
+| **Total Duration** | $\mathbf{61.72\text{s}}$ | $\mathbf{2,723,925}$ | |
 

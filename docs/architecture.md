@@ -8,7 +8,6 @@ This document outlines the module structure and the engineering logic behind the
 
 | Module | Purpose |
 | :--- | :--- |
-| **`baird.py`** | Implementation of the Forward and Inverse **Baird Amplitude** mapping formulas. |
 | **`hilbert.py`** | Logic for converting linear pixel indices into 2D coordinates using the **Hilbert Space-Filling Curve**. |
 | **`image.py`** | Image processing pipeline: loading, padding to square, resizing, and pixel extraction/reconstruction. |
 | **`audio.py`** | Digital Signal Processing (DSP) core: WAV file handling, **AFSK** header encoding/decoding, and **Vector Cross-Correlation** sync logic. |

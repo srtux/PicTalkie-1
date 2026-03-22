@@ -22,7 +22,7 @@ PicTalkie transmits images as audio over walkie-talkies. The pipeline is:
 
 ### Module roles
 
-- `baird.py`, `hilbert.py` — Pure math functions (amplitude formula, space-filling curve)
+- `hilbert.py` — Pure math functions (Hilbert space-filling curve)
 - `image.py` — Image I/O: pad/resize, extract/reconstruct pixels in Hilbert order
 - `audio.py` — Audio I/O: full protocol encode/decode, WAV read/write, calibration correction
 - `constants.py` — All tunable parameters, protocol timing, colors, and UI layout. No magic numbers elsewhere.
@@ -32,7 +32,7 @@ PicTalkie transmits images as audio over walkie-talkies. The pipeline is:
 
 ### Audio protocol structure
 
-The WAV message is self-describing: `Preamble (0.3s) | Gap | Calibration (2.56s, 256 levels) | Gap | Sync (0.12s, alternating 0/255) | Gap | Header (0.03s, width/height/channels) | Gap | Pixel Data (~58s)`. The decoder auto-detects the protocol; if absent, falls back to legacy headerless format.
+The WAV message is self-describing: `VOX Wakeup (0.5s, 1500 Hz tone) | Chirp (0.12s, 1000→3000 Hz sweep) | Gap | AFSK Header (0.48s, width/height/channels/checksum) | Gap | Calibration (2.56s, 256 levels) | Gap | Pixel Data (~58s)`. The decoder auto-detects the protocol via chirp cross-correlation; if absent, falls back to legacy headerless format.
 
 ### Key conventions
 

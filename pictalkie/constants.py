@@ -13,7 +13,7 @@ TOTAL_VALUES = TOTAL_PIXELS * CHANNELS                     # 196,608
 DATA_SAMPLES = TOTAL_VALUES * SAMPLES_PER_VALUE            # 2,555,904
 
 # --- Protocol sections ---
-# Message: Wakeup | Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
+# Message: VOX Wakeup | Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
 
 VOX_WAKEUP_DURATION = 0.5        # seconds -- steady tone to open VOX gate
 VOX_WAKEUP_FREQ = 1500           # Frequency (Hz)
@@ -41,7 +41,6 @@ CALIBRATION_LEVELS = 256         # one for each possible pixel value (0-255)
 CALIBRATION_DURATION = 2.56      # seconds -- 10ms per level
 CALIBRATION_SPV = int(SAMPLE_RATE * CALIBRATION_DURATION / CALIBRATION_LEVELS)  # 441
 
-NUM_GAPS = 3
 PROTOCOL_SAMPLES = (
     VOX_WAKEUP_SAMPLES
     + CHIRP_SAMPLES
