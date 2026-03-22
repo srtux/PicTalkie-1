@@ -7,7 +7,7 @@ Decoding pipeline:
     WAV samples -> parse protocol -> calibration correction -> pixel values
 
 Protocol message structure:
-    Preamble | Gap | Calibration | Gap | Sync | Gap | Header | Gap | Pixel Data
+    Preamble | Gap | Calibration | Gap | Header | Gap | Pixel Data
 """
 
 import wave
@@ -20,7 +20,6 @@ from .constants import (
     PREAMBLE_SAMPLES, PREAMBLE_AMPLITUDE,
     GAP_SAMPLES,
     CALIBRATION_LEVELS, CALIBRATION_SPV,
-    SYNC_PATTERN, SYNC_COUNT, SYNC_SPV,
     HEADER_COUNT, HEADER_SPV,
     PROTOCOL_SAMPLES,
 )
@@ -36,7 +35,7 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
 
     Message structure:
         Preamble (0.3s) | Gap | Calibration (2.56s) | Gap |
-        Sync (0.12s) | Gap | Header (0.03s) | Gap | Pixel Data (~57.96s)
+        Header (0.03s) | Gap | Pixel Data (~57.96s)
 
     Returns:
         numpy float32 array of the complete audio message.
@@ -54,19 +53,13 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
     parts.append(np.repeat(cal_amps, CALIBRATION_SPV))
     parts.append(gap)
 
-    # 3. Sync -- alternating low-high pattern for alignment
-    sync_values = np.array(SYNC_PATTERN, dtype=np.float32)
-    sync_amps = np.clip((sync_values - 127) / 255 + 0.2, -1.0, 1.0)
-    parts.append(np.repeat(sync_amps, SYNC_SPV))
-    parts.append(gap)
-
-    # 4. Header -- image dimensions (width, height, channels)
+    # 3. Header -- image dimensions (width, height, channels)
     header_values = np.array([width, height, channels], dtype=np.float32)
     header_amps = np.clip((header_values - 127) / 255 + 0.2, -1.0, 1.0)
     parts.append(np.repeat(header_amps, HEADER_SPV))
     parts.append(gap)
 
-    # 5. Pixel data -- Baird-encoded values with repetition for noise resilience
+    # 4. Pixel data -- Baird-encoded values with repetition for noise resilience
     values = np.asarray(pixel_values, dtype=np.float32)
     amplitudes = np.clip((values - 127) / 255 + 0.2, -1.0, 1.0)
     parts.append(np.repeat(amplitudes, SAMPLES_PER_VALUE))
@@ -159,16 +152,6 @@ def parse_protocol(samples):
     cal_data = samples[offset:offset + cal_total]
     calibration = cal_data.reshape(CALIBRATION_LEVELS, CALIBRATION_SPV).mean(axis=1)
     offset += cal_total + GAP_SAMPLES
-
-    # Verify sync pattern
-    sync_total = SYNC_COUNT * SYNC_SPV
-    sync_data = samples[offset:offset + sync_total]
-    sync_amps = sync_data.reshape(SYNC_COUNT, SYNC_SPV).mean(axis=1)
-    sync_vals = np.round((sync_amps - 0.2) * 255 + 127).astype(int)
-    expected = np.array(SYNC_PATTERN)
-    if not np.allclose(sync_vals, expected, atol=30):
-        return None
-    offset += sync_total + GAP_SAMPLES
 
     # Read header (no clamping -- width=256 must survive the round-trip)
     header_total = HEADER_COUNT * HEADER_SPV

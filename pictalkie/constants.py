@@ -13,7 +13,7 @@ TOTAL_VALUES = TOTAL_PIXELS * CHANNELS                     # 196,608
 DATA_SAMPLES = TOTAL_VALUES * SAMPLES_PER_VALUE            # 2,555,904
 
 # --- Protocol sections ---
-# Message: Preamble | Gap | Calibration | Gap | Sync | Gap | Header | Gap | Pixel Data
+# Message: Preamble | Gap | Calibration | Gap | Header | Gap | Pixel Data
 
 PREAMBLE_DURATION = 0.3          # seconds -- carrier tone for radio wake-up
 PREAMBLE_AMPLITUDE = 0.2         # mid-gray baseline (same as Baird offset)
@@ -26,23 +26,17 @@ CALIBRATION_LEVELS = 256         # one for each possible pixel value (0-255)
 CALIBRATION_DURATION = 2.56      # seconds -- 10ms per level
 CALIBRATION_SPV = int(SAMPLE_RATE * CALIBRATION_DURATION / CALIBRATION_LEVELS)  # 441
 
-SYNC_PATTERN = [0, 255, 0, 255, 0, 255]
-SYNC_COUNT = len(SYNC_PATTERN)   # 6
-SYNC_DURATION = 0.12             # seconds
-SYNC_SPV = int(SAMPLE_RATE * SYNC_DURATION / SYNC_COUNT)  # 882
-
 HEADER_COUNT = 3                 # width, height, channels
 HEADER_DURATION = 0.03           # seconds
 HEADER_SPV = int(SAMPLE_RATE * HEADER_DURATION / HEADER_COUNT)  # 441
 
-NUM_GAPS = 4
+NUM_GAPS = 3
 PROTOCOL_SAMPLES = (
     PREAMBLE_SAMPLES
     + CALIBRATION_LEVELS * CALIBRATION_SPV
-    + SYNC_COUNT * SYNC_SPV
     + HEADER_COUNT * HEADER_SPV
     + NUM_GAPS * GAP_SAMPLES
-)  # 141,561
+)  # 133,197
 
 # --- Total message ---
 TOTAL_SAMPLES = PROTOCOL_SAMPLES + DATA_SAMPLES           # 2,697,465
