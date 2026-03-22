@@ -262,6 +262,8 @@ class DecoderScreen:
         self.calibration = None
         self.stream_synced = False
         self.protocol_info = None
+        self._last_chunk_count = 0
+        self._resampled_cache = None
 
     # --- Decoding ---
 
@@ -310,14 +312,24 @@ class DecoderScreen:
             self.progress_label.set_text(f"Recording: {elapsed:.1f}s  (expected: ~{expected:.0f}s)")
 
             if self.mic._chunks:
-                raw = np.concatenate(self.mic._chunks)
-                # Resample to protocol sample rate if mic uses a different rate
-                device_rate = self.mic._device_rate or SAMPLE_RATE
-                if device_rate != SAMPLE_RATE:
-                    from .components import _resample
-                    current_samples = _resample(raw, device_rate, SAMPLE_RATE)
-                else:
-                    current_samples = raw
+                # Incremental resampling: only process new chunks since last frame
+                n_chunks = len(self.mic._chunks)
+                if n_chunks > self._last_chunk_count:
+                    new_raw = np.concatenate(self.mic._chunks[self._last_chunk_count:])
+                    self._last_chunk_count = n_chunks
+                    device_rate = self.mic._device_rate or SAMPLE_RATE
+                    if device_rate != SAMPLE_RATE:
+                        from .components import _resample
+                        new_resampled = _resample(new_raw, device_rate, SAMPLE_RATE)
+                    else:
+                        new_resampled = new_raw
+                    if self._resampled_cache is None:
+                        self._resampled_cache = new_resampled
+                    else:
+                        self._resampled_cache = np.concatenate([self._resampled_cache, new_resampled])
+                current_samples = self._resampled_cache
+                if current_samples is None:
+                    return
 
                 if not self.stream_synced:
                     protocol = parse_protocol(current_samples)
@@ -337,7 +349,18 @@ class DecoderScreen:
 
                 if self.stream_synced:
                     data = current_samples[self.protocol_info['data_offset']:]
-                    self.all_pixel_values = decode_from_samples(data, SAMPLES_PER_VALUE, self.protocol_info['calibration'])
+                    # Decode only the tail we haven't decoded yet
+                    already = len(self.all_pixel_values) if self.all_pixel_values else 0
+                    skip_samples = already * SAMPLES_PER_VALUE
+                    if skip_samples < len(data):
+                        new_vals = decode_from_samples(
+                            data[skip_samples:], SAMPLES_PER_VALUE,
+                            self.protocol_info['calibration'],
+                        )
+                        if self.all_pixel_values is None:
+                            self.all_pixel_values = new_vals
+                        else:
+                            self.all_pixel_values.extend(new_vals)
                     
                     target_pixels = min(len(self.all_pixel_values) // self.image_channels, self.total_pixels)
                     

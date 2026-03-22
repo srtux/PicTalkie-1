@@ -125,10 +125,11 @@ class MicRecorder:
         if self._device_rate and self._device_rate != SAMPLE_RATE:
             raw = _resample(raw, self._device_rate, SAMPLE_RATE)
 
-        # Normalize: scale peak amplitude to match encoder's range (~0.7 max)
+        # Normalize peak to ~0.95 to use full dynamic range without clipping.
+        # Calibration correction handles any gain mismatch with the encoder.
         peak = np.max(np.abs(raw))
         if peak > 0.001:
-            raw = raw * (0.7 / peak)
+            raw = raw * (0.95 / peak)
 
         return raw
 
@@ -142,9 +143,47 @@ class MicRecorder:
 
 
 def _resample(samples, from_rate, to_rate):
-    """Resample audio using linear interpolation."""
-    duration = len(samples) / from_rate
-    n_out = int(duration * to_rate)
-    x_old = np.linspace(0, duration, len(samples), endpoint=False)
-    x_new = np.linspace(0, duration, n_out, endpoint=False)
-    return np.interp(x_new, x_old, samples).astype(np.float32)
+    """Resample audio using FFT-based method that preserves carrier frequencies.
+
+    Linear interpolation attenuates the ~3392 Hz AM carrier during 48kHz->44.1kHz
+    conversion.  FFT resampling truncates or zero-pads the spectrum, preserving
+    all frequencies below the lower Nyquist limit with no amplitude loss.
+    """
+    from math import gcd
+    g = gcd(from_rate, to_rate)
+    up, down = to_rate // g, from_rate // g
+
+    n_in = len(samples)
+    n_out = int(np.ceil(n_in * up / down))
+
+    # FFT-based: pad/truncate spectrum to change sample count
+    # Process in blocks to keep memory bounded
+    block = min(n_in, from_rate * 10)  # ≤10s blocks
+    result_parts = []
+    pos = 0
+    while pos < n_in:
+        end = min(pos + block, n_in)
+        chunk = samples[pos:end]
+        chunk_len = len(chunk)
+        target_len = int(np.round(chunk_len * up / down))
+        if target_len == 0:
+            break
+
+        spectrum = np.fft.rfft(chunk)
+        target_spectrum_len = target_len // 2 + 1
+
+        if target_spectrum_len <= len(spectrum):
+            # Downsample: truncate high frequencies
+            resampled_spectrum = spectrum[:target_spectrum_len]
+        else:
+            # Upsample: zero-pad high frequencies
+            resampled_spectrum = np.zeros(target_spectrum_len, dtype=spectrum.dtype)
+            resampled_spectrum[:len(spectrum)] = spectrum
+
+        resampled = np.fft.irfft(resampled_spectrum, n=target_len)
+        # Scale to preserve amplitude
+        resampled *= target_len / chunk_len
+        result_parts.append(resampled)
+        pos = end
+
+    return np.concatenate(result_parts).astype(np.float32) if result_parts else np.array([], dtype=np.float32)
