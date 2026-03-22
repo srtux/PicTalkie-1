@@ -13,34 +13,50 @@ TOTAL_VALUES = TOTAL_PIXELS * CHANNELS                     # 196,608
 DATA_SAMPLES = TOTAL_VALUES * SAMPLES_PER_VALUE            # 2,555,904
 
 # --- Protocol sections ---
-# Message: Preamble | Gap | Calibration | Gap | Header | Gap | Pixel Data
+# Message: Wakeup | Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
 
-PREAMBLE_DURATION = 0.3          # seconds -- carrier tone for radio wake-up
-PREAMBLE_AMPLITUDE = 0.2         # mid-gray baseline (same as Baird offset)
-PREAMBLE_SAMPLES = int(SAMPLE_RATE * PREAMBLE_DURATION)  # 13,230
+VOX_WAKEUP_DURATION = 0.5        # seconds -- steady tone to open VOX gate
+VOX_WAKEUP_FREQ = 1500           # Frequency (Hz)
+VOX_WAKEUP_SAMPLES = int(SAMPLE_RATE * VOX_WAKEUP_DURATION)  # 22,050
+
+CHIRP_DURATION = 0.12            # seconds -- frequency sweep for sync
+CHIRP_F0 = 1000                  # Start frequency (Hz)
+CHIRP_F1 = 3000                  # End frequency (Hz)
+CHIRP_SAMPLES = int(SAMPLE_RATE * CHIRP_DURATION)  # 5,292
+
 
 GAP_DURATION = 0.05              # 50ms silence between sections
 GAP_SAMPLES = int(SAMPLE_RATE * GAP_DURATION)  # 2,205
+
+FSK_MARK = 2200                  # Frequency for bit '1' (Hz)
+FSK_SPACE = 1200                 # Frequency for bit '0' (Hz)
+FSK_BIT_DURATION = 0.01          # 10ms per bit (100 Baud)
+FSK_BIT_SAMPLES = int(SAMPLE_RATE * FSK_BIT_DURATION)  # 441
+
+# Header bits: Width (16), Height (16), Channels (8), Checksum (8) = 48 bits
+HEADER_BITS = 48
+HEADER_SAMPLES = HEADER_BITS * FSK_BIT_SAMPLES  # 21,168
 
 CALIBRATION_LEVELS = 256         # one for each possible pixel value (0-255)
 CALIBRATION_DURATION = 2.56      # seconds -- 10ms per level
 CALIBRATION_SPV = int(SAMPLE_RATE * CALIBRATION_DURATION / CALIBRATION_LEVELS)  # 441
 
-HEADER_COUNT = 3                 # width, height, channels
-HEADER_DURATION = 0.03           # seconds
-HEADER_SPV = int(SAMPLE_RATE * HEADER_DURATION / HEADER_COUNT)  # 441
-
 NUM_GAPS = 3
 PROTOCOL_SAMPLES = (
-    PREAMBLE_SAMPLES
+    VOX_WAKEUP_SAMPLES
+    + CHIRP_SAMPLES
+    + GAP_SAMPLES
+    + HEADER_SAMPLES
+    + GAP_SAMPLES
     + CALIBRATION_LEVELS * CALIBRATION_SPV
-    + HEADER_COUNT * HEADER_SPV
-    + NUM_GAPS * GAP_SAMPLES
-)  # 133,197
+    + GAP_SAMPLES
+)  # 168,021
+
 
 # --- Total message ---
-TOTAL_SAMPLES = PROTOCOL_SAMPLES + DATA_SAMPLES           # 2,697,465
-AUDIO_DURATION = TOTAL_SAMPLES / SAMPLE_RATE               # ~61.17s
+TOTAL_SAMPLES = PROTOCOL_SAMPLES + DATA_SAMPLES           # 2,701,875 (approx)
+AUDIO_DURATION = TOTAL_SAMPLES / SAMPLE_RATE
+
 
 # --- Dark theme (GitHub-inspired) ---
 COLOR_BG = (13, 17, 23)

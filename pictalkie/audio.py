@@ -17,13 +17,77 @@ import numpy as np
 from .constants import (
     SAMPLE_RATE, SAMPLES_PER_VALUE, TOTAL_VALUES,
     IMAGE_SIZE, CHANNELS,
-    PREAMBLE_SAMPLES, PREAMBLE_AMPLITUDE,
+    VOX_WAKEUP_FREQ, VOX_WAKEUP_SAMPLES,
+    CHIRP_DURATION, CHIRP_F0, CHIRP_F1, CHIRP_SAMPLES,
     GAP_SAMPLES,
+    FSK_MARK, FSK_SPACE, FSK_BIT_SAMPLES, HEADER_BITS, HEADER_SAMPLES,
     CALIBRATION_LEVELS, CALIBRATION_SPV,
-    HEADER_COUNT, HEADER_SPV,
     PROTOCOL_SAMPLES,
 )
+
 from .image import reconstruct_image
+
+
+# ---------------------------------------------------------------------------
+# Digital helpers for modem especification
+# ---------------------------------------------------------------------------
+
+def _generate_chirp():
+    """Generate a linear frequency sweep (Chirp) for synchronization."""
+    t = np.linspace(0, CHIRP_DURATION, CHIRP_SAMPLES, endpoint=False)
+    # freq(t) = f0 + (f1 - f0) * t / T
+    # phase(t) = 2 * pi * int(freq(t) dt) = 2 * pi * (f0*t + (f1-f0)/2/T * t^2)
+    phase = 2 * np.pi * (CHIRP_F0 * t + (CHIRP_F1 - CHIRP_F0) * t**2 / (2 * CHIRP_DURATION))
+    return np.sin(phase).astype(np.float32)
+
+
+def _encode_bits_afsk(bits):
+    """Encode a list of bits (0 or 1) into AFSK audio samples."""
+    samples = []
+    t = np.linspace(0, 1.0 / SAMPLE_RATE * FSK_BIT_SAMPLES, FSK_BIT_SAMPLES, endpoint=False)
+    sine_mark = np.sin(2 * np.pi * FSK_MARK * t).astype(np.float32)
+    sine_space = np.sin(2 * np.pi * FSK_SPACE * t).astype(np.float32)
+
+    for bit in bits:
+        samples.append(sine_mark if bit else sine_space)
+
+    return np.concatenate(samples)
+
+
+def _int_to_bits(val, num_bits):
+    """Convert an integer to a list of bits (MSB first)."""
+    return [int(b) for b in format(val, f'0{num_bits}b')]
+
+
+def _bits_to_int(bits):
+    """Convert a list of bits back into an integer."""
+    out = 0
+    for bit in bits:
+        out = (out << 1) | bit
+    return out
+
+
+def _demodulate_afsk(samples, num_bits):
+    """Demodulate AFSK audio samples into a list of bits."""
+    bits = []
+    t = np.linspace(0, 1.0 / SAMPLE_RATE * FSK_BIT_SAMPLES, FSK_BIT_SAMPLES, endpoint=False)
+    sine_mark = np.sin(2 * np.pi * FSK_MARK * t).astype(np.float32)
+    sine_space = np.sin(2 * np.pi * FSK_SPACE * t).astype(np.float32)
+
+    for i in range(num_bits):
+        start = i * FSK_BIT_SAMPLES
+        end = start + FSK_BIT_SAMPLES
+        if end > len(samples):
+            break
+        chunk = samples[start:end]
+        
+        dot_mark = np.abs(np.dot(chunk, sine_mark))
+        dot_space = np.abs(np.dot(chunk, sine_space))
+        bits.append(1 if dot_mark > dot_space else 0)
+
+    return bits
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -34,8 +98,7 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
     """Encode pixel values into a full protocol message.
 
     Message structure:
-        Preamble (0.3s) | Gap | Calibration (2.56s) | Gap |
-        Header (0.03s) | Gap | Pixel Data (~57.96s)
+        Chirp | Gap | AFSK Header | Gap | Calibration | Gap | Pixel Data
 
     Returns:
         numpy float32 array of the complete audio message.
@@ -43,20 +106,32 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
     parts = []
     gap = np.zeros(GAP_SAMPLES, dtype=np.float32)
 
-    # 1. Preamble -- steady carrier tone so the radio can wake up
-    parts.append(np.full(PREAMBLE_SAMPLES, PREAMBLE_AMPLITUDE, dtype=np.float32))
+    # 0. VOX Wakeup -- steady tone to trigger radio transmission
+    t_vox = np.linspace(0, 1.0 * VOX_WAKEUP_SAMPLES / SAMPLE_RATE, VOX_WAKEUP_SAMPLES, endpoint=False)
+    wakeup_tone = np.sin(2 * np.pi * VOX_WAKEUP_FREQ * t_vox).astype(np.float32)
+    parts.append(wakeup_tone)
+
+    # 1. Sync Chirp -- frequency sweep for start detection
+
+    parts.append(_generate_chirp())
     parts.append(gap)
 
-    # 2. Calibration -- all 256 amplitude levels in order
+    # 2. digital AFSK Header -- image dimensions
+    # Bits: Width (16), Height (16), Channels (8), Checksum (8)
+    checksum = (width ^ height ^ channels) & 0xFF
+    bits = []
+    bits.extend(_int_to_bits(width, 16))
+    bits.extend(_int_to_bits(height, 16))
+    bits.extend(_int_to_bits(channels, 8))
+    bits.extend(_int_to_bits(checksum, 8))
+
+    parts.append(_encode_bits_afsk(bits))
+    parts.append(gap)
+
+    # 3. Calibration -- all 256 amplitude levels in order
     cal_values = np.arange(CALIBRATION_LEVELS, dtype=np.float32)
     cal_amps = np.clip((cal_values - 127) / 255 + 0.2, -1.0, 1.0)
     parts.append(np.repeat(cal_amps, CALIBRATION_SPV))
-    parts.append(gap)
-
-    # 3. Header -- image dimensions (width, height, channels)
-    header_values = np.array([width, height, channels], dtype=np.float32)
-    header_amps = np.clip((header_values - 127) / 255 + 0.2, -1.0, 1.0)
-    parts.append(np.repeat(header_amps, HEADER_SPV))
     parts.append(gap)
 
     # 4. Pixel data -- Baird-encoded values with repetition for noise resilience
@@ -65,6 +140,7 @@ def encode_to_samples(pixel_values, width=IMAGE_SIZE, height=IMAGE_SIZE, channel
     parts.append(np.repeat(amplitudes, SAMPLES_PER_VALUE))
 
     return np.concatenate(parts)
+
 
 
 # ---------------------------------------------------------------------------
@@ -136,37 +212,61 @@ def _decode_24bit(raw_data):
 # ---------------------------------------------------------------------------
 
 def parse_protocol(samples):
-    """Parse protocol sections from audio samples.
+    """Parse protocol sections from audio samples using Chirp sync and AFSK header.
 
     Returns:
         dict with calibration, width, height, channels, data_offset
-        or None if protocol not detected (legacy format).
+        or None if protocol not detected.
     """
     if len(samples) < PROTOCOL_SAMPLES:
         return None
 
-    offset = PREAMBLE_SAMPLES + GAP_SAMPLES
+    # 1. Sync using Chirp correlation
+    template = _generate_chirp()
+    search_len = min(len(samples), int(SAMPLE_RATE * 10))
+    corr = np.correlate(samples[:search_len], template, mode='valid')
+    start_idx = np.argmax(np.abs(corr))
+    
+    # Validation: guarantee peak is substantial? 
+    # Just indexing offset from peak for now
+    offset = start_idx + CHIRP_SAMPLES + GAP_SAMPLES
 
-    # Read calibration: average each level's samples to get measured amplitude
+    # 2. Demodulate digital AFSK Header
+    if offset + HEADER_SAMPLES > len(samples):
+        return None
+    header_data = samples[offset:offset + HEADER_SAMPLES]
+    bits = _demodulate_afsk(header_data, HEADER_BITS)
+
+    if len(bits) < HEADER_BITS:
+        return None
+
+    width = _bits_to_int(bits[0:16])
+    height = _bits_to_int(bits[16:32])
+    channels = _bits_to_int(bits[32:40])
+    checksum = _bits_to_int(bits[40:48])
+
+    calc_checksum = (width ^ height ^ channels) & 0xFF
+    if checksum != calc_checksum:
+        print(f"Warning: Header checksum failed ({checksum} != {calc_checksum})")
+
+    offset += HEADER_SAMPLES + GAP_SAMPLES
+
+    # 3. Read calibration
     cal_total = CALIBRATION_LEVELS * CALIBRATION_SPV
+    if offset + cal_total > len(samples):
+        return None
     cal_data = samples[offset:offset + cal_total]
     calibration = cal_data.reshape(CALIBRATION_LEVELS, CALIBRATION_SPV).mean(axis=1)
     offset += cal_total + GAP_SAMPLES
 
-    # Read header (no clamping -- width=256 must survive the round-trip)
-    header_total = HEADER_COUNT * HEADER_SPV
-    header_data = samples[offset:offset + header_total]
-    header_amps = header_data.reshape(HEADER_COUNT, HEADER_SPV).mean(axis=1)
-    header_vals = np.round((header_amps - 0.2) * 255 + 127).astype(int)
-    offset += header_total + GAP_SAMPLES
-
     return {
         'calibration': calibration,
-        'width': int(header_vals[0]),
-        'height': int(header_vals[1]),
-        'channels': int(header_vals[2]),
+        'width': width,
+        'height': height,
+        'channels': channels,
         'data_offset': offset,
     }
+
 
 
 # ---------------------------------------------------------------------------
