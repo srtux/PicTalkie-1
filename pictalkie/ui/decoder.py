@@ -472,8 +472,8 @@ class DecoderScreen:
                 from .components import draw_waveform
                 draw_waveform(surface, recent_samples, CONTENT_INSET, WAVE_Y, wave_w, WAVE_H, color=COLOR_ACCENT)
 
-        # Live image reconstruction
-        display_surf = self.live_display if self.decoding else self.decoded_surface
+        # Live image reconstruction (during mic recording, WAV decode, or after completion)
+        display_surf = self.live_display if (self.decoding or self.mic_recording) else self.decoded_surface
         if display_surf:
             img_x = self.w // 2 - DISPLAY_SIZE // 2
             border_size = DISPLAY_SIZE + 2 * BORDER_WIDTH
