@@ -24,6 +24,7 @@ from ..audio import (
     normalize_decode_samples,
     parse_protocol,
     _apply_bandpass_filter,
+
 )
 from ..hilbert import get_hilbert_order
 from ..image import reconstruct_image
@@ -336,12 +337,14 @@ class DecoderScreen:
                     current_samples = _apply_bandpass_filter(current_samples)
                     self._resampled_cache = current_samples
 
-
                 current_samples = self._resampled_cache
                 if current_samples is None:
                     return
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/main
                 if not self.stream_synced:
                     protocol = parse_protocol(current_samples)
                     if protocol:
@@ -370,7 +373,6 @@ class DecoderScreen:
                             self.protocol_info['calibration'],
                         )
 
-
                         if self.all_pixel_values is None:
                             self.all_pixel_values = new_vals
                         else:
@@ -397,6 +399,7 @@ class DecoderScreen:
                                             self.all_pixel_values[base + 1],
                                             self.all_pixel_values[base + 2],
                                         ))
+
                         self.pixels_decoded = target_pixels
                         self.live_display = pygame.transform.scale(self.live_surface, (DISPLAY_SIZE, DISPLAY_SIZE))
                         pct = (self.pixels_decoded / self.total_pixels) * 100

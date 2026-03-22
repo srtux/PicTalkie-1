@@ -19,6 +19,9 @@ env/
 _temp_pictalkie*.wav
 *_decoded.png
 
+examples/*.wav
+examples/*.png
+
 # macOS system files
 .DS_Store
 .AppleDouble
@@ -34,3 +37,7 @@ Icon
 
 # Scratch directories
 pictalkie/scratch/
+scratch/
+
+.claude/
+

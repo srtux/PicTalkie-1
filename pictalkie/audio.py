@@ -419,7 +419,6 @@ def _apply_bandpass_filter(samples, low=800.0, high=5500.0):
     filtered_signal = np.fft.irfft(spectrum_filtered, n=len(samples))
     return filtered_signal.astype(np.float32)
 
-
 # ---------------------------------------------------------------------------
 # Protocol parsing
 # ---------------------------------------------------------------------------

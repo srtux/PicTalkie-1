@@ -90,3 +90,4 @@ uv run pytest tests/ -v
 ## Credits
 
 All algorithms (Baird mapping, Hilbert traversal, AFSK sync) were customized specifically for high-noise radio propagation.
+

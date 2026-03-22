@@ -28,6 +28,7 @@ Because radios can be noisy and cut out, PicTalkie wraps the image in a special 
     *   If it continues **exactly the same**, that means **"0"**.
 *   **Why do we use it**: We use this digital differential code to shout: *"Hey! This image is 256 pixels wide, 256 pixels tall, and has 3 color layers (Red, Green, Blue)."* Because it only looks at phase changes, it easily survives room static and volume clipping!
 
+
 ---
 
 ## 📊 4. Analog Calibration
@@ -62,6 +63,7 @@ graph LR
         A["VOX Wakeup<br>0.5s"] --> B["Chirp Sync<br>0.12s"]
         B --> C["Gap<br>50ms"]
         C --> D["DPSK Header<br>1.47s"]
+
         D --> E["Gap<br>50ms"]
         E --> F["Calibration<br>2.56s"]
         F --> G["Gap<br>50ms"]
@@ -103,11 +105,12 @@ sequenceDiagram
 | **Sample Rate** | - | $44,100 \text{ Hz}$ | Native 16-bit PCM Mono (encoded) |
 | **VOX Wakeup** | $0.5\text{s}$ | $22,050$ | $1,500\text{ Hz}$ Continuous |
 | **Sync Chirp** | $0.12\text{s}$ | $5,292$ | $1,000 \rightarrow 3,000\text{ Hz}$ Sweep |
-| **Gap Silence** | $0.05\text{s}$ | $2,205$ | $0.0$ Amplitude buffer |
-| **AFSK Header** | $0.48\text{s}$ | $21,168$ | Mark: $2200\text{Hz}$ \| Space: $1200\text{Hz}$ (48-bits) |
-| **Calibration** | $2.56\text{s}$ | $112,896$ | $256$ Multi-level analog steps |
+| **Gap Silence** | $0.05\text{s}$ (x3) | $6,615$ | $0.0$ Amplitude buffer |
+| **DPSK Header** | $1.47\text{s}$ | $64,827$ | Differential PSK (56-bits, 100 Baud) |
+| **Calibration** | $0.75\text{s}$ | $33,280$ | $256$ levels x 13 spv x 10 reps |
 | **Pixel Data** | $\sim 57.96\text{s}$ | $2,555,904$ | Baird-encoded analog repetition code |
-| **Total Duration** | $\mathbf{61.72\text{s}}$ | $\mathbf{2,723,925}$ | |
+| **Total Duration** | $\mathbf{60.95\text{s}}$ | $\mathbf{2,687,968}$ | |
+
 
 ---
 

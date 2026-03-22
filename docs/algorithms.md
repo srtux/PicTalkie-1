@@ -1,4 +1,4 @@
-# 🧠 The Logic Behind The Sounds (Fun Explainer Edition!)
+# 🧠 The Logic Behind The Sounds
 
 How do you turn a flat photograph into a stream of audio, send it through the air, and draw it back perfectly without losing detail? 
 
@@ -10,16 +10,29 @@ Here is the secret recipe broken down with **puzzle boards**, **dimmer switches*
 *   **The Job**: Decide what order to read the pixels in.
 *   **The Dilemma**: If you read pixels row-by-row (like reading a book), a burst of static on your walkie-talkie wipes out a straight horizontal line across your picture.
 *   **The Solution**: We read the pixels following a snake-like puzzle path called a **Hilbert Curve**.
-*   **Metaphor**: Imagine a wire snaked through a maze. If a bird snaps a small piece of the wire, it only garbles a small **blob** of the image instead of wiping out a full stripe. Your brain can easily guess what's missing on a small dot!
+*   **Metaphor**: Imagine a wire snaked through a maze. If static hits the transmission, it only garbles a small **blob** of the image instead of wiping out a full stripe. Your brain can easily guess what's missing in a small dot!
+
+### 🐍 1.1 Hilbert Path (4x4 Grid Example)
+
+Below is how PicTalkie visits pixels in a 4x4 grid order (0 to 15):
+
+| $Y \downarrow, X \rightarrow$ | $X=0$ | $X=1$ | $X=2$ | $X=3$ |
+| :--- | :--- | :--- | :--- | :--- |
+| **$Y=0$** | $0$ | $1$ | $14$ | $15$ |
+| **$Y=1$** | $3$ | $2$ | $13$ | $12$ |
+| **$Y=2$** | $4$ | $7$ | $8$ | $11$ |
+| **$Y=3$** | $5$ | $6$ | $9$ | $10$ |
+
+Notice how the path snakes continuously through the grid.
 
 ---
 
 ## 💡 2. Baird Amplitude: The Dimmer Switch
 *   **The Job**: Turn "Color Brightness" into "Sound Volume".
-*   **Metaphor**: Imagine plugged a light bulb into a speaker volume slider.
+*   **Metaphor**: Imagine plugging a light bulb into a speaker volume slider.
     *   Volume up **LOUD** = Light bulb shines **super bright** ☀️.
     *   Volume down to a **hum** = Light bulb goes **dark** 🌚.
-*   **Static Averaging (SPV x13)**: Walkie-talkies make weird popping noises. To overcome this, PicTalkie repeats each single pixel volume **13 times in a row!** The computer averages them together. If 2 pops of static hit, the other 11 correct levels win the vote!
+*   **Static Averaging (SPV x 13)**: Walkie-talkies make weird popping noises. To overcome this, PicTalkie repeats each single pixel volume **13 times in a row!** The computer averages them together. If 2 pops of static hit, the other 11 correct levels win the vote!
 
 ---
 
@@ -27,7 +40,7 @@ Here is the secret recipe broken down with **puzzle boards**, **dimmer switches*
 *   **The Job**: Tell the computer EXACTLY when the image starts.
 *   **What it sounds like**: A fast whistle sweep (*WHEEEEEEP!*).
 *   **Metaphor**: If you start drawing a picture on a canvas before the page has loaded, everything is drawn off-center. 
-*   **Logic**: The computer compares incoming noise against the "Whistle Template". When the shapes match perfectly, they achieve **synchronization**. It shouts **"Found it!"** and aligns pixel number 1 to that exact microsecond.
+*   **Logic**: The receiver compares incoming noise against the "Whistle Template". When the shapes match perfectly, they achieve **synchronization**. It shouts **"Found it!"** and aligns pixel number 1 to that exact microsecond.
 
 ---
 
@@ -45,8 +58,7 @@ Here is the secret recipe broken down with **puzzle boards**, **dimmer switches*
 *   **The Job**: Translate audio rates (e.g., 48,000 speeds to 44,100 speeds) without breaks.
 *   **The Fix**: **FFT-based (Offline) & Linear Interpolation (Live Resampling)**.
     *   **Offline File Loading**: Uses highly accurate Fast Fourier Transform (FFT) resampling.
-    *   **Live Mic Recording**: Uses fast **Linear Interpolation** for live chunks arrivals over cumulative grids.
-*   **Noise Gate Filter lock**: Both modes align full continuous vectors onto full-buffer **FFT brick-wall frequency gate filters** to eliminate sub-chunk border transient artifacts guarantees absolute amplitude pixel clarity.
+    *   **Live Mic Recording**: Uses fast **Linear Interpolation** to handle chunk arrivals efficiently.
 
 ---
 
@@ -65,7 +77,7 @@ graph TD
     subgraph Transmit ["TRANSMITTER (Encoder: Image -> Audio)"]
         A["Raw Image"] --> B["Pad to Square & Resize (256x256)"]
         B --> C["Hilbert Curve Pixel Extraction (Snake Path)"]
-        C --> D["Baird Amplitude Modulation (Color -> Volume)"]
+        C --> D["Baird Amplitude Modulation (Color -> volume)"]
         D --> E["Repetition averaging buffers (SPV x13)"]
         D --> F["Prepend Control Tones (Preamble + Chirp + DPSK)"]
         E --> G["Continuous Output Streams"]
@@ -91,8 +103,7 @@ graph TD
 
 ---
 
-## 🏆 📈 FOR THE MATH NERDS: The Under The Hood Gory Details
-
+## 🏆 📈 FOR THE MATH NERDS: Under The Hood
 
 For absolute hardware design compliance, here are the raw equations:
 
@@ -108,4 +119,4 @@ $$\text{Corr}[n] = \left| \sum_{m=0}^{M-1} S_{\text{rx}}[n+m] \cdot S_{\text{chi
 $$\text{Dot} = \text{sum}(S_n \cdot S_{n-1})$$
 $$\text{Bit} = \begin{cases} 1 & \text{if } \text{Dot} < 0 \\ 0 & \text{if } \text{Dot} \ge 0 \end{cases}$$
 
-By locking absolute continuity at frames absolute nodes, PicTalkie achieves infallible analog resilience!
+By locking absolute continuity at frame nodes, PicTalkie achieves infallible analog resilience!

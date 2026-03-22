@@ -100,6 +100,7 @@ class EncoderScreen:
         if not self._auto_loaded:
             self._auto_loaded = True
             example = Path(__file__).resolve().parent.parent.parent / "examples" / "test_image.png"
+
             if example.exists():
                 self._load_image(str(example))
                 self._encode()

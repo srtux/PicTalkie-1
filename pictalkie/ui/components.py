@@ -126,7 +126,7 @@ class MicRecorder:
 
         # Resample to SAMPLE_RATE if mic uses a different rate
         if self._device_rate and self._device_rate != SAMPLE_RATE:
-            raw = _resample(raw, self._device_rate, SAMPLE_RATE)
+            raw = _resample(raw, self._device_rate, SAMPLE_RATE, method='fft')
 
         # Normalize peak to ~0.95 to use full dynamic range without clipping.
         # Calibration correction handles any gain mismatch with the encoder.
@@ -145,20 +145,50 @@ class MicRecorder:
         return total / (self._device_rate or SAMPLE_RATE)
 
 
-def _resample(samples, from_rate, to_rate):
-    """Resample audio using linear interpolation to avoid boundary glitches.
-
-    Linear interpolation preserves phase alignment and timing across continuous
-    timescales without accumulating block-rounding drift.
-    """
+def _resample(samples, from_rate, to_rate, method='linear'):
+    """Resample audio. Methods: 'linear' (fast, continuous) or 'fft' (high quality)."""
     if from_rate == to_rate or len(samples) == 0:
         return samples
 
+    if method == 'linear':
+        n_in = len(samples)
+        n_out = int(np.round(n_in * to_rate / from_rate))
+        t_in = np.arange(n_in) / from_rate
+        t_out = np.arange(n_out) / to_rate
+        return np.interp(t_out, t_in, samples).astype(np.float32)
+    
+    # FFT method
+    from math import gcd
+    g = gcd(from_rate, to_rate)
+    up, down = to_rate // g, from_rate // g
+
     n_in = len(samples)
-    n_out = int(np.round(n_in * to_rate / from_rate))
+    n_out = int(np.ceil(n_in * up / down))
 
-    t_in = np.arange(n_in) / from_rate
-    t_out = np.arange(n_out) / to_rate
+    block = min(n_in, from_rate * 10)
+    result_parts = []
+    pos = 0
+    while pos < n_in:
+        end = min(pos + block, n_in)
+        chunk = samples[pos:end]
+        chunk_len = len(chunk)
+        target_len = int(np.round(chunk_len * up / down))
+        if target_len == 0:
+            break
 
-    return np.interp(t_out, t_in, samples).astype(np.float32)
+        spectrum = np.fft.rfft(chunk)
+        target_spectrum_len = target_len // 2 + 1
+
+        if target_spectrum_len <= len(spectrum):
+            resampled_spectrum = spectrum[:target_spectrum_len]
+        else:
+            resampled_spectrum = np.zeros(target_spectrum_len, dtype=spectrum.dtype)
+            resampled_spectrum[:len(spectrum)] = spectrum
+
+        resampled = np.fft.irfft(resampled_spectrum, n=target_len)
+        resampled *= target_len / chunk_len
+        result_parts.append(resampled)
+        pos = end
+
+    return np.concatenate(result_parts).astype(np.float32) if result_parts else np.array([], dtype=np.float32)
 
