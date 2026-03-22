@@ -1,6 +1,8 @@
 """Encoder screen: select image, preview, encode to audio, play/save."""
 
 import time
+from pathlib import Path
+
 import pygame
 import pygame_gui
 from pygame_gui.windows import UIFileDialog
@@ -75,6 +77,7 @@ class EncoderScreen:
         self.encode_btn.hide()
         self.play_btn.hide()
         self.save_btn.hide()
+        self._auto_loaded = False
 
     def _btn(self, x, y, w, h, text, obj_id=None):
         btn = pygame_gui.elements.UIButton(
@@ -93,6 +96,14 @@ class EncoderScreen:
         return lbl
 
     def show(self):
+        # One-shot: auto-load example image on first open for quick testing
+        if not self._auto_loaded:
+            self._auto_loaded = True
+            example = Path(__file__).resolve().parent.parent.parent / "examples" / "flood.jpg"
+            if example.exists():
+                self._load_image(str(example))
+                self._encode()
+
         for el in self.elements:
             el.show()
         self.encode_btn.hide()
