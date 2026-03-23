@@ -9,6 +9,7 @@ dependencies = [
     "pygame-ce>=2.5.7",
     "pygame-gui>=0.6.14",
     "sounddevice>=0.5.5",
+    "opencv-python-headless>=4.9.0",
 ]
 
 [dependency-groups]

@@ -31,8 +31,8 @@ from pictalkie.image import load_and_process_image, extract_pixels_hilbert
 
 
 def _encode_test_image(color=(255, 0, 0)):
-    """Create and encode a solid-color 256x256 test image."""
-    img = Image.new("RGB", (256, 256), color)
+    """Create and encode a solid-color test image using constants."""
+    img = Image.new("RGB", (constants.IMAGE_SIZE, constants.IMAGE_SIZE), color)
     temp_path = "_test_modem_img.png"
     try:
         img.save(temp_path)
@@ -41,7 +41,7 @@ def _encode_test_image(color=(255, 0, 0)):
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-    samples = encode_to_samples(pixel_values, width=256, height=256, channels=3)
+    samples = encode_to_samples(pixel_values)
     return samples, pixel_values
 
 
@@ -74,8 +74,8 @@ def test_modem_robustness():
 
     protocol = parse_protocol(received)
     assert protocol is not None, "Protocol should be detected"
-    assert protocol["width"] == 256
-    assert protocol["height"] == 256
+    assert protocol["width"] == constants.IMAGE_SIZE
+    assert protocol["height"] == constants.IMAGE_SIZE
     assert protocol["channels"] == 3
 
 
@@ -161,7 +161,7 @@ def test_decode_wav_file_resamples_48khz_recording(tmp_path):
     _save_pcm_wav(recorded, 48000, wav_path)
 
     decoded = decode_wav_file(str(wav_path))
-    expected = np.array(Image.new("RGB", (256, 256), color))
+    expected = np.array(Image.new("RGB", (constants.IMAGE_SIZE, constants.IMAGE_SIZE), color))
     actual = np.array(decoded)
     assert np.array_equal(expected, actual), (
         f"48 kHz decode mismatch: {np.sum(expected != actual)} values differ"
@@ -189,7 +189,7 @@ def test_stereo_wav_downmix(tmp_path):
     # Downmixed to half amplitude (average of 0 + signal)
     protocol = parse_protocol(loaded)
     assert protocol is not None, "Chirp should be detected from downmixed stereo"
-    assert protocol["width"] == 256
+    assert protocol["width"] == constants.IMAGE_SIZE
 
 
 # --- Upgrade 2: Full-file chirp search ---
@@ -207,7 +207,7 @@ def test_full_file_chirp_search_with_late_start():
     # Full-file search should find it
     protocol = parse_protocol(late, max_search_samples=len(late))
     assert protocol is not None, "Full-file search should find late chirp"
-    assert protocol["width"] == 256
+    assert protocol["width"] == constants.IMAGE_SIZE
 
 
 # --- Upgrade 3: Normalized chirp detection ---
@@ -220,7 +220,7 @@ def test_chirp_detection_volume_independent():
     quiet = samples * 0.01
     protocol = parse_protocol(quiet)
     assert protocol is not None, "Normalized detection should find quiet chirp"
-    assert protocol["width"] == 256
+    assert protocol["width"] == constants.IMAGE_SIZE
 
     # Normal amplitude
     protocol = parse_protocol(samples)
@@ -236,7 +236,7 @@ def test_chirp_detection_volume_independent():
 
 def test_crc16_checksum_validation():
     """CRC-16 detects single-bit errors that XOR-8 would miss."""
-    payload = _header_payload_bytes(256, 256, 3)
+    payload = _header_payload_bytes(constants.IMAGE_SIZE, constants.IMAGE_SIZE, 3)
     crc = _crc16_ccitt(payload)
     assert crc == _crc16_ccitt(payload), "Deterministic CRC"
 
@@ -249,7 +249,7 @@ def test_crc16_checksum_validation():
     samples, _ = _encode_test_image()
     protocol = parse_protocol(samples)
     assert protocol is not None
-    assert protocol["width"] == 256
+    assert protocol["width"] == constants.IMAGE_SIZE
 
 
 # --- Upgrade 5: Monotonic calibration ---

@@ -398,7 +398,7 @@ def normalize_decode_samples(samples, sample_rate):
     return resample_samples(samples, sample_rate, SAMPLE_RATE)
 
 
-def _apply_bandpass_filter(samples, low=800.0, high=5500.0):
+def _apply_bandpass_filter(samples, low=800.0, high=2800.0):
     """Apply an FFT brickwall bandpass filter to remove room noise rumble.
 
     Args:

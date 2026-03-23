@@ -3,9 +3,9 @@
 # --- Encoding format ---
 
 SAMPLE_RATE = 44100          # CD-quality, universally supported
-IMAGE_SIZE = 256             # Power-of-2 required by Hilbert curve (256x256 = 65,536 pixels)
-CHANNELS = 3                 # RGB color
-SAMPLES_PER_VALUE = 13       # Repetitions per value for noise resilience (SNR ~3.6x via averaging)
+IMAGE_SIZE = 256             # Keep it 256x256 to send in about 1 minute
+CHANNELS = 3                 
+SAMPLES_PER_VALUE = 20       # CHANGED: 44100 / 20 = 2205 Hz carrier. Perfect for voice band!
 
 # Derived (pixel data only)
 TOTAL_PIXELS = IMAGE_SIZE * IMAGE_SIZE                     # 65,536
@@ -20,8 +20,8 @@ VOX_WAKEUP_FREQ = 1500           # Frequency (Hz)
 VOX_WAKEUP_SAMPLES = int(SAMPLE_RATE * VOX_WAKEUP_DURATION)  # 22,050
 
 CHIRP_DURATION = 0.12            # seconds -- frequency sweep for sync
-CHIRP_F0 = 1000                  # Start frequency (Hz)
-CHIRP_F1 = 3000                  # End frequency (Hz)
+CHIRP_F0 = 800                   # CHANGED: Lower start frequency
+CHIRP_F1 = 2200                  # CHANGED: Lower end frequency
 CHIRP_SAMPLES = int(SAMPLE_RATE * CHIRP_DURATION)  # 5,292
 
 

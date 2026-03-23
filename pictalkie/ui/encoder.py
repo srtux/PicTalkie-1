@@ -57,10 +57,18 @@ class EncoderScreen:
         self.file_dialog = None
         self.save_dialog = None
 
+        # Webcam state
+        self.cam = None
+        self.live_preview = False
+        self.cam_index = 0
+        self.current_frame = None
+
         # UI elements
         self.back_btn = self._btn(BACK_BTN_X, TOP_Y, BACK_BTN_W, BACK_BTN_H, "<")
         self.heading = self._label(HEADING_X, TOP_Y, HEADING_W, BACK_BTN_H, "Encoder", "#heading_label")
-        self.select_btn = self._btn(MARGIN, BUTTON_ROW_Y, self.w - 2 * MARGIN, BUTTON_H, "Select Image")
+        half_w = (self.w - 2 * MARGIN - BUTTON_GAP) // 2
+        self.select_btn = self._btn(MARGIN, BUTTON_ROW_Y, half_w, BUTTON_H, "Select Image")
+        self.cam_btn = self._btn(MARGIN + BUTTON_GAP + half_w, BUTTON_ROW_Y, half_w, BUTTON_H, "Live Camera")
         self.encode_btn = self._btn(
             MARGIN, ENCODE_BTN_Y, self.w - 2 * MARGIN, BUTTON_H,
             "ENCODE TO AUDIO", "#accent_button",
@@ -120,6 +128,7 @@ class EncoderScreen:
     def hide(self):
         for el in self.elements:
             el.hide()
+        self._stop_camera()  # Insure stream stops when screen hides
 
     def handle_event(self, event):
         """Returns 'back' or None."""
@@ -130,6 +139,8 @@ class EncoderScreen:
                 return 'back'
             if event.ui_element == self.select_btn:
                 self._open_select_dialog()
+            if event.ui_element == self.cam_btn:
+                self._toggle_camera()
             if event.ui_element == self.encode_btn:
                 self._encode()
             if event.ui_element == self.play_btn:
@@ -139,6 +150,7 @@ class EncoderScreen:
 
         if event.type == pygame_gui.UI_FILE_DIALOG_PATH_PICKED:
             if event.ui_element == self.file_dialog:
+                self._stop_camera()  # Stop live feed if file dialog picks something
                 self._load_image(event.text)
             elif event.ui_element == self.save_dialog:
                 if self.encoded_samples is not None:
@@ -152,6 +164,47 @@ class EncoderScreen:
                         self.status_label.set_text(f"Save error: {e}")
 
         return None
+
+    def _toggle_camera(self):
+        import cv2
+        if self.live_preview:
+            self._capture_frame()
+            self._stop_camera()
+        else:
+            try:
+                self.cam = cv2.VideoCapture(self.cam_index)
+                if self.cam.isOpened():
+                    self.live_preview = True
+                    self.cam_btn.set_text("Take Picture")
+                    self.status_label.set_text("Camera Active")
+                    self.source_surface = None
+                    self.processed_surface = None
+                    self.encoded = False
+                else:
+                    self.status_label.set_text("Failed to open camera")
+            except Exception as e:
+                self.status_label.set_text(f"Camera Error: {e}")
+
+    def _stop_camera(self):
+        if self.cam:
+            self.cam.release()
+            self.cam = None
+        self.live_preview = False
+        self.cam_btn.set_text("Live Camera")
+
+    def _capture_frame(self):
+        if self.current_frame is not None:
+            from PIL import Image
+            # crop is already square from update()
+            img = Image.fromarray(self.current_frame)
+            self.processed_image = img.resize((IMAGE_SIZE, IMAGE_SIZE), Image.LANCZOS)
+            
+            self.processed_surface = pil_to_pygame(
+                self.processed_image.resize((PREVIEW_SIZE, PREVIEW_SIZE), Image.NEAREST)
+            )
+            self.encoded = False
+            self.encode_btn.show()
+            self.status_label.set_text("Captured frame. Ready to Encode.")
 
     def _open_select_dialog(self):
         self.file_dialog = UIFileDialog(
@@ -224,6 +277,23 @@ class EncoderScreen:
         if self.playing and not is_audio_playing():
             self.playing = False
             self.play_btn.set_text("Play")
+
+        if self.live_preview and self.cam:
+            import cv2
+            ret, frame = self.cam.read()
+            if ret:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                h, w = frame_rgb.shape[:2]
+                size = min(h, w)
+                start_h = (h - size) // 2
+                start_w = (w - size) // 2
+                crop = frame_rgb[start_h:start_h+size, start_w:start_w+size]
+                self.current_frame = crop
+                
+                from PIL import Image
+                img = Image.fromarray(crop)
+                img.thumbnail((PREVIEW_SIZE, PREVIEW_SIZE), Image.LANCZOS)
+                self.source_surface = pil_to_pygame(img)
 
     def draw_background(self, surface):
         surface.fill(COLOR_BG)
